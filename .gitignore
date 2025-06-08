@@ -1,0 +1,7 @@
+# Python artifacts
+__pycache__/
+*.py[cod]
+
+# Django database
+backend/db.sqlite3
+
