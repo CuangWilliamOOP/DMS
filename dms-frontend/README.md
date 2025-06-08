@@ -2,6 +2,11 @@
 
 This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
 
+### API URL
+
+The frontend reads the API base URL from the `REACT_APP_API_URL` environment
+variable. During development it defaults to `http://127.0.0.1:8000/api`.
+
 ## Available Scripts
 
 In the project directory, you can run:
