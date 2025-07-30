@@ -225,5 +225,13 @@ class UserSettings(models.Model):
     # minutes; 0 == never auto-logout
     idle_timeout = models.PositiveIntegerField(default=60)
 
+    THEME_CHOICES = [
+        ("light", "Light"),
+        ("dark", "Dark"),
+    ]
+    theme_mode = models.CharField(
+        max_length=10, choices=THEME_CHOICES, default="light"
+    )
+
     def __str__(self):
         return f"{self.user.username} settings"

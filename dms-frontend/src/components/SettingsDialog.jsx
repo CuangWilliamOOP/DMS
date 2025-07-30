@@ -35,7 +35,7 @@ import { ColorModeContext } from "../theme/ColorModeProvider";
 import API from "../services/api";
 
 export default function PengaturanDialog({ open, onClose }) {
-  const { mode, toggle } = useContext(ColorModeContext);
+  const { mode, toggle: toggleMode } = useContext(ColorModeContext);
   const [notifEmail, setNotifEmail] = useState(
     localStorage.getItem("pref_notif_email") !== "false"
   );
@@ -115,13 +115,15 @@ export default function PengaturanDialog({ open, onClose }) {
       fullWidth
       maxWidth="xs"
       PaperProps={{
-        sx: {
+        sx: (theme) => ({
           borderRadius: 4,
           backdropFilter: "blur(13px) saturate(160%)",
           background:
-            "linear-gradient(150deg, rgba(255,255,255,0.90) 50%, rgba(224,224,255,0.75) 100%)",
+            theme.palette.mode === "dark"
+              ? "linear-gradient(140deg, rgba(35,48,90,0.97) 70%, rgba(60,44,84,0.94) 100%)"
+              : "linear-gradient(150deg, rgba(255,255,255,0.90) 50%, rgba(224,224,255,0.75) 100%)",
           boxShadow: "0 10px 36px 0 rgba(34,50,84,0.16)",
-        },
+        }),
       }}
     >
       {/* ————————————————— HEADER ————————————————— */}
@@ -131,7 +133,10 @@ export default function PengaturanDialog({ open, onClose }) {
           textAlign: "center",
           p: 3,
           mb: 0.5,
-          background: "linear-gradient(87deg, #1976d2 0%, #42a5f5 100%)",
+          background: (theme) =>
+            theme.palette.mode === "dark"
+              ? "linear-gradient(87deg, #242a43 0%, #4f3d61 100%)"
+              : "linear-gradient(87deg, #1976d2 0%, #42a5f5 100%)",
           color: "#fff",
           borderTopLeftRadius: 16,
           borderTopRightRadius: 16,
@@ -155,12 +160,28 @@ export default function PengaturanDialog({ open, onClose }) {
       </DialogTitle>
 
       {/* ————————————————— BODY ————————————————— */}
-      <DialogContent dividers sx={{ p: 0, background: "transparent" }}>
+      <DialogContent
+        dividers
+        sx={{
+          p: 0,
+          background: (theme) =>
+            theme.palette.mode === "dark"
+              ? "rgba(40,34,60,0.90)"
+              : "transparent",
+        }}
+      >
         {/* ============ TAMPILAN ============ */}
         <List disablePadding>
           <ListItemButton
             onClick={() => handleSection("appearance")}
-            sx={{ bgcolor: openSection === "appearance" ? "rgba(123,31,162,0.05)" : "inherit" }}
+            sx={{
+              bgcolor: (theme) =>
+                openSection === "appearance"
+                  ? theme.palette.mode === "dark"
+                    ? "rgba(100,75,180,0.13)"
+                    : "rgba(123,31,162,0.05)"
+                  : "inherit",
+            }}
           >
             <ListItemIcon>
               <ColoredIcon icon={<PaletteIcon />} color="#7b1fa2" />
@@ -183,7 +204,10 @@ export default function PengaturanDialog({ open, onClose }) {
                   <Switch
                     color="primary"
                     checked={mode === "dark"}
-                    onChange={(e) => toggle(e.target.checked)}
+                    onChange={(e) => {
+                      console.log('Theme toggle fired:', e.target.checked);
+                      toggleMode(e.target.checked);
+                    }}
                   />
                 }
                 label="Aktifkan mode gelap"
@@ -195,7 +219,14 @@ export default function PengaturanDialog({ open, onClose }) {
           {/* ============ NOTIFIKASI ============ */}
           <ListItemButton
             onClick={() => handleSection("notifications")}
-            sx={{ bgcolor: openSection === "notifications" ? "rgba(198,40,40,0.05)" : "inherit" }}
+            sx={{
+              bgcolor: (theme) =>
+                openSection === "notifications"
+                  ? theme.palette.mode === "dark"
+                    ? "rgba(180,60,60,0.13)"
+                    : "rgba(198,40,40,0.05)"
+                  : "inherit",
+            }}
           >
             <ListItemIcon>
               <ColoredIcon icon={<NotificationsIcon />} color="#c62828" />
@@ -227,7 +258,14 @@ export default function PengaturanDialog({ open, onClose }) {
           {/* ============ KEAMANAN ============ */}
           <ListItemButton
             onClick={() => handleSection("security")}
-            sx={{ bgcolor: openSection === "security" ? "rgba(46,125,50,0.07)" : "inherit" }}
+            sx={{
+              bgcolor: (theme) =>
+                openSection === "security"
+                  ? theme.palette.mode === "dark"
+                    ? "rgba(46,125,50,0.13)"
+                    : "rgba(46,125,50,0.07)"
+                  : "inherit",
+            }}
           >
             <ListItemIcon>
               <ColoredIcon icon={<LogoutIcon />} color="#2e7d32" />

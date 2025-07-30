@@ -5,6 +5,7 @@ import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import useIdleLogout from "./hooks/useIdleLogout";
 import API from "./services/api";
+import ColorModeProvider from "./theme/ColorModeProvider";
 
 // Layout
 import MainLayout from './layouts/MainLayout';
@@ -31,78 +32,80 @@ function App() {
   useIdleLogout(idleMinutes);
 
   return (
-    <Router>
-      <Routes>
-        {/* Auth */}
-        <Route path="/" element={<Navigate to="/login" />} />
-        <Route path="/login" element={<LoginPage />} />
+    <ColorModeProvider>
+      <Router>
+        <Routes>
+          {/* Auth */}
+          <Route path="/" element={<Navigate to="/login" />} />
+          <Route path="/login" element={<LoginPage />} />
 
-        {/* Halaman utama */}
-        <Route
-          path="/home"
-          element={
-            <MainLayout>
-              <HomePage />
-            </MainLayout>
-          }
-        />
+          {/* Halaman utama */}
+          <Route
+            path="/home"
+            element={
+              <MainLayout>
+                <HomePage />
+              </MainLayout>
+            }
+          />
 
-        <Route
-          path="/add"
-          element={
-            <MainLayout>
-              <AddDocumentPage />
-            </MainLayout>
-          }
-        />
+          <Route
+            path="/add"
+            element={
+              <MainLayout>
+                <AddDocumentPage />
+              </MainLayout>
+            }
+          />
 
-        <Route
-          path="/directory"
-          element={
-            <MainLayout>
-              <DirectoryPage />
-            </MainLayout>
-          }
-        />
+          <Route
+            path="/directory"
+            element={
+              <MainLayout>
+                <DirectoryPage />
+              </MainLayout>
+            }
+          />
 
-        <Route
-          path="/directory/:companyName"
-          element={
-            <MainLayout>
-              <CompanyDirectoryPage />
-            </MainLayout>
-          }
-        />
+          <Route
+            path="/directory/:companyName"
+            element={
+              <MainLayout>
+                <CompanyDirectoryPage />
+              </MainLayout>
+            }
+          />
 
-        <Route
-          path="/directory/:companyName/:dirKey"
-          element={
-            <MainLayout>
-              <CompanyDirectoryPage />
-            </MainLayout>
-          }
-        />
+          <Route
+            path="/directory/:companyName/:dirKey"
+            element={
+              <MainLayout>
+                <CompanyDirectoryPage />
+              </MainLayout>
+            }
+          />
 
-        {/* FIX: route baru untuk pratinjau dokumen */}
-        <Route
-          path="/preview/:id"
-          element={
-            <MainLayout>
-              <DocumentPreviewPage />
-            </MainLayout>
-          }
-        />
+          {/* FIX: route baru untuk pratinjau dokumen */}
+          <Route
+            path="/preview/:id"
+            element={
+              <MainLayout>
+                <DocumentPreviewPage />
+              </MainLayout>
+            }
+          />
 
-        <Route
-          path="/directory/:companyName/:dirKey/preview/:docCode"
-          element={
-            <MainLayout>
-              <DocumentPreviewPage />
-            </MainLayout>
-          }
-        />
-      </Routes>
-    </Router>
+          <Route
+            path="/directory/:companyName/:dirKey/preview/:docCode"
+            element={
+              <MainLayout>
+                <DocumentPreviewPage />
+              </MainLayout>
+            }
+          />
+        </Routes>
+      </Router>
+    </ColorModeProvider>
   );
 }
 

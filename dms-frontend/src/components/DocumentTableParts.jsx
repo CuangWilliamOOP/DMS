@@ -86,10 +86,20 @@ export function ItemDocsPreview({
   const [activeIdx, setActiveIdx] = useState(0); // track which doc is showing
   const [approvalDialogOpen, setApprovalDialogOpen] = useState(false);
   const [docToApprove, setDocToApprove] = useState(null);
+  const prevDocsLength = React.useRef(0);
 
   // sinkronisasi prop → state, always sorted
   useEffect(() => {
     setDocs(sortBySeq(initialItemDocs));
+    // If docs got longer, set to last; otherwise, stay where you are
+    if (
+      (userRole === "employee" || userRole === "admin") &&
+      ["draft", "belum_disetujui"].includes(mainDocStatus) &&
+      (initialItemDocs?.length || 0) > prevDocsLength.current
+    ) {
+      setCurrentIndex((initialItemDocs?.length || 1) - 1);
+    }
+    prevDocsLength.current = initialItemDocs?.length || 0;
   }, [initialItemDocs]);
 
   // Pastikan currentIndex valid

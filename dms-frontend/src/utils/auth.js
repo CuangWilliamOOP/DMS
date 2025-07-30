@@ -11,5 +11,6 @@ export function logout() {
   localStorage.removeItem('refreshToken');
   localStorage.removeItem('username');
   localStorage.removeItem('role');
+  window.dispatchEvent(new Event("theme_update"));
   window.location.href = '/login';
 }

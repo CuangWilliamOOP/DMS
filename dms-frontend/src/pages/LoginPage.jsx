@@ -40,6 +40,7 @@ export default function LoginPage() {
       else if (res2.data.groups.includes('admin')) role = 'employee';
 
       localStorage.setItem('role', role);
+      window.dispatchEvent(new Event("theme_update"));
       navigate('/home');
     } catch (err) {
       alert('Username atau password salah!');

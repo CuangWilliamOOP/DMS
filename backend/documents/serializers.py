@@ -40,4 +40,4 @@ class SupportingDocumentSerializer(serializers.ModelSerializer):
 class UserSettingsSerializer(serializers.ModelSerializer):
     class Meta:
         model = UserSettings
-        fields = ("idle_timeout",)
+        fields = ("idle_timeout", "theme_mode")
