@@ -2,6 +2,7 @@
 import React from 'react';
 import { AppBar, Toolbar, Typography, Box, Button } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
+import { logout } from '../utils/auth';
 
 // Fungsi sederhana untuk menentukan sapaan sesuai jam
 function getGreeting() {
@@ -49,7 +50,7 @@ function TopBar() {
         </Box>
 
         {/* Bagian kanan: tombol Logout */}
-        <Button variant="contained" color="inherit" onClick={handleLogout}>
+        <Button variant="contained" color="inherit" onClick={logout}>
           Logout
         </Button>
       </Toolbar>

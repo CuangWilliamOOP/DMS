@@ -35,14 +35,28 @@ function HomePage() {
     return [];
   };
   
-  
   const handleTabChange = (event, newValue) => {
     setTabValue(newValue);
   };
 
+  const pendingCount = documents.filter(
+    (d) =>
+      !d.archived &&
+      (d.status === 'belum_disetujui' || d.status === 'draft')
+  ).length;
+
+  const approvedCount = documents.filter(
+    (d) => !d.archived && d.status === 'disetujui'
+  ).length;
+
   return (
       <Box sx={{ px: 2, pb: 2, pt: 0, mt: -6 }}>
-      <SubHeaderTabs tabValue={tabValue} onTabChange={handleTabChange} />
+      <SubHeaderTabs
+        tabValue={tabValue}
+        onTabChange={handleTabChange}
+        pendingCount={pendingCount}
+        approvedCount={approvedCount}
+      />
 
       {/* DocumentTable expects a list of docs to display */}
       <DocumentTable

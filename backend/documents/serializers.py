@@ -1,31 +1,37 @@
+"""backend/documents/serializers.py – updated to surface SupportingDocument.identifier
+"""
+
 from rest_framework import serializers
+
 from .models import Document, SupportingDocument
+
 
 class DocumentSerializer(serializers.ModelSerializer):
     class Meta:
         model = Document
-        fields = [
-            'id',
-            'document_code',
-            'title',
-            'doc_type',
-            'company',
-            'file',
-            'description',
-            'status',
-            'reject_comment',  
-            'rejected_at',      
-            'created_at',
-            'updated_at',
-            'approved_at',
-            'parsed_json',
-            'payment_reference',  
-            'paid_at',
-            'archived',          # ← Tambahkan ini
-            'archived_at'        # ← dan ini
-        ]
+        fields = "__all__"
+        read_only_fields = (
+            "document_code",
+            "sequence_no",
+            "revision_no",
+            "approved_at",
+            "rejected_at",
+            "finished_draft_at",
+            "paid_at",
+            "archived_at",
+        )
+
 
 class SupportingDocumentSerializer(serializers.ModelSerializer):
+    # Expose concatenated identifier (read‑only)
+    identifier = serializers.CharField(read_only=True)
+
     class Meta:
         model = SupportingDocument
-        fields = '__all__'
+        fields = "__all__"
+        read_only_fields = (
+            "supporting_doc_sequence",
+            "identifier",
+            "approved_at",
+            "created_at",
+        )

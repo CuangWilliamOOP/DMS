@@ -1,4 +1,5 @@
-// src/App.js
+// File: src/App.js
+// ----------------
 
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
@@ -12,18 +13,17 @@ import HomePage from './pages/HomePage';
 import AddDocumentPage from './pages/AddDocumentPage';
 import DirectoryPage from './pages/DirectoryPage';
 import CompanyDirectoryPage from './pages/CompanyDirectoryPage';
+import DocumentPreviewPage from './pages/DocumentPreviewPage';   // FIX: import halaman pratinjau
 
 function App() {
   return (
     <Router>
       <Routes>
-        {/* Bila user buka '/', redirect ke '/login' */}
+        {/* Auth */}
         <Route path="/" element={<Navigate to="/login" />} />
-
-        {/* Halaman login, tanpa layout */}
         <Route path="/login" element={<LoginPage />} />
 
-        {/* Halaman lain yang butuh layout */}
+        {/* Halaman utama */}
         <Route
           path="/home"
           element={
@@ -32,6 +32,7 @@ function App() {
             </MainLayout>
           }
         />
+
         <Route
           path="/add"
           element={
@@ -49,6 +50,7 @@ function App() {
             </MainLayout>
           }
         />
+
         <Route
           path="/directory/:companyName"
           element={
@@ -58,7 +60,33 @@ function App() {
           }
         />
 
-        {/* Opsional: Bisa tambahkan Route 404 di sini jika mau */}
+        <Route
+          path="/directory/:companyName/:dirKey"
+          element={
+            <MainLayout>
+              <CompanyDirectoryPage />
+            </MainLayout>
+          }
+        />
+
+        {/* FIX: route baru untuk pratinjau dokumen */}
+        <Route
+          path="/preview/:id"
+          element={
+            <MainLayout>
+              <DocumentPreviewPage />
+            </MainLayout>
+          }
+        />
+
+        <Route
+          path="/directory/:companyName/:dirKey/preview/:docCode"
+          element={
+            <MainLayout>
+              <DocumentPreviewPage />
+            </MainLayout>
+          }
+        />
       </Routes>
     </Router>
   );

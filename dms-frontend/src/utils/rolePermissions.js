@@ -35,5 +35,5 @@ export const canEvaluateSupportingDoc = (userRole, sDocStatus, docStatus) => {
 };
 
 export const canFinishDraft = (userRole, docStatus) => {
-  return userRole === 'employee' && docStatus === 'draft';
+  return ['employee', 'owner'].includes(userRole) && docStatus === 'draft';
 };

@@ -1,21 +1,6 @@
 // File: src/components/DocumentTable.jsx
 import React, { useState, useCallback, useEffect } from 'react';
-import {
-  Paper,
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TableRow,
-  IconButton,
-  Collapse,
-  Box,
-  Typography,
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogContentText,
+import {Paper,Table,TableBody,TableCell,TableContainer,TableHead,TableRow,IconButton,Collapse,Box,Typography,Dialog,DialogTitle,DialogContent,DialogContentText,
   DialogActions,
   Button,
   TextField,
@@ -30,6 +15,8 @@ import {
   ApproveTagihanDialog,
   RejectReasonDialog,
   ReviseConfirmationDialog,
+  PaymentReferenceDialog, 
+  PaymentCompleteDialog,
 } from './Dialogs';
 
 import { useDropzone } from 'react-dropzone';
@@ -54,8 +41,11 @@ import {
 } from './DocumentTableParts';
 
 import MissingDocsDialog from './MissingDocsDialog';
+import { useTheme } from '@mui/material/styles';
 
 function DocumentTable({ documents, refreshDocuments }) {
+  const theme = useTheme();
+  const isDark = theme.palette.mode === 'dark';
   const [expandedRows, setExpandedRows] = useState([]);
   const [itemDocsExpandedMap, setItemDocsExpandedMap] = useState({});
   const [supportingDocs, setSupportingDocs] = useState({});
@@ -89,6 +79,13 @@ function DocumentTable({ documents, refreshDocuments }) {
   const [dialogContent, setDialogContent] = useState('');
   const [confirmReviseOpen, setConfirmReviseOpen] = useState(false);
   const [docToRevise, setDocToRevise] = useState(null);
+  const [payDlgOpen, setPayDlgOpen]  = useState(false);
+  const [payDlgDefault, setPayDlgDefault] = useState('');
+  const [payCtx, setPayCtx] = useState(null); // {docId, sectionIndex, rowIndex, refCode}
+  const [payDoneDlgOpen, setPayDoneDlgOpen] = useState(false);
+  // 🔝 state hooks (near other dialog states)
+  const [payDoneDoc,     setPayDoneDoc]     = useState(null);
+
 
   const userRole = localStorage.getItem('role');
   const expandDocTypes = [
@@ -120,10 +117,39 @@ function DocumentTable({ documents, refreshDocuments }) {
     setRejectDialogOpen(true);
   };
 
+  const hasMissingPayRef = useCallback(
+    (id) => {
+      const sections = parsedSectionsMap[id] || [];
+      for (const sec of sections) {
+        /* ⇢ ignore summary-only sections */
+        if (!sec.table || sec.hasOwnProperty('grand_total')) continue;
+  
+        const headers = sec.table[0] || [];
+        const payIdx  = headers.indexOf('PAY_REF');
+        if (payIdx === -1) return true;
+  
+        const rows = sec.table.slice(1);
+        if (
+          rows.some((r) => {
+            /* skip rows that are entirely blank (optional) */
+            const meaningful = r.some((v, i) => i !== payIdx && String(v || '').trim());
+            if (!meaningful) return false;
+            const val = r[payIdx];
+            return !val || !String(val).trim();
+          })
+        )
+          return true;
+      }
+      return false;
+    },
+    [parsedSectionsMap]
+  );
+  
+
   async function handleRejectConfirm() {
     if (!docToReject) return;
     if (!rejectReason.trim()) {
-      alert('Alasan penolakan harus diisi.');
+      // alert('Alasan penolakan harus diisi.');
       return;
     }
   
@@ -132,11 +158,11 @@ function DocumentTable({ documents, refreshDocuments }) {
         status: 'rejected',
         reject_comment: rejectReason,
       });
-      alert('Dokumen berhasil ditolak.');
+      // alert('Dokumen berhasil ditolak.');
       refreshDocuments();
     } catch (error) {
       console.error('Gagal menolak dokumen:', error);
-      alert('Terjadi kesalahan saat menolak dokumen.');
+      // alert('Terjadi kesalahan saat menolak dokumen.');
     } finally {
       setRejectDialogOpen(false);
       setDocToReject(null);
@@ -198,7 +224,7 @@ function DocumentTable({ documents, refreshDocuments }) {
       refreshDocuments();
     } catch (error) {
       console.error(error);
-      alert('Terjadi kesalahan saat memperbaiki dokumen.');
+      // alert('Terjadi kesalahan saat memperbaiki dokumen.');
     } finally {
       setConfirmReviseOpen(false);
       setDocToRevise(null);
@@ -221,11 +247,12 @@ function DocumentTable({ documents, refreshDocuments }) {
       ...oldSections.slice(sectionIndex + 1),
     ];
     try {
-      await API.patch(`/documents/${editDocId}/`, { parsed_json: newSections });
-      setParsedSectionsMap((old) => ({ ...old, [editDocId]: newSections }));
+      const res = await API.patch(`/documents/${editDocId}/`, { parsed_json: newSections });
+      const updated = res.data.parsed_json || [];
+      setParsedSectionsMap((old) => ({ ...old, [editDocId]: updated }));
     } catch (error) {
       console.error(error);
-      alert('Gagal menambahkan baris baru.');
+      // alert('Gagal menambahkan baris baru.');
     }
   }
 
@@ -242,11 +269,12 @@ function DocumentTable({ documents, refreshDocuments }) {
       ...oldSections.slice(sectionIndex + 1),
     ];
     try {
-      await API.patch(`/documents/${editDocId}/`, { parsed_json: newSections });
-      setParsedSectionsMap((old) => ({ ...old, [editDocId]: newSections }));
+      const res = await API.patch(`/documents/${editDocId}/`, { parsed_json: newSections });
+      const updated = res.data.parsed_json || [];
+      setParsedSectionsMap((old) => ({ ...old, [editDocId]: updated }));
     } catch (error) {
       console.error(error);
-      alert('Gagal menghapus baris.');
+      // alert('Gagal menghapus baris.');
     }
   }
 
@@ -266,12 +294,13 @@ function DocumentTable({ documents, refreshDocuments }) {
       newSections.push(newSection);
     }
     try {
-      await API.patch(`/documents/${editDocId}/`, { parsed_json: newSections });
-      setParsedSectionsMap((old) => ({ ...old, [editDocId]: newSections }));
-      alert('Section baru ditambahkan.');
+      const res = await API.patch(`/documents/${editDocId}/`, { parsed_json: newSections });
+      const updated = res.data.parsed_json || [];
+      setParsedSectionsMap((old) => ({ ...old, [editDocId]: updated }));
+      // alert('Section baru ditambahkan.');
     } catch (error) {
       console.error(error);
-      alert('Gagal menambahkan section baru.');
+      // alert('Gagal menambahkan section baru.');
     }
   }
 
@@ -280,11 +309,12 @@ function DocumentTable({ documents, refreshDocuments }) {
     const oldSections = parsedSectionsMap[editDocId];
     const newSections = oldSections.filter((_, idx) => idx !== sectionIndex);
     try {
-      await API.patch(`/documents/${editDocId}/`, { parsed_json: newSections });
-      setParsedSectionsMap((old) => ({ ...old, [editDocId]: newSections }));
+      const res = await API.patch(`/documents/${editDocId}/`, { parsed_json: newSections });
+      const updated = res.data.parsed_json || [];
+      setParsedSectionsMap((old) => ({ ...old, [editDocId]: updated }));
     } catch (error) {
       console.error(error);
-      alert('Gagal menghapus section.');
+      // alert('Gagal menghapus section.');
     }
   }
 
@@ -307,11 +337,12 @@ function DocumentTable({ documents, refreshDocuments }) {
       ...oldSections.slice(sectionIndex + 1),
     ];
     try {
-      await API.patch(`/documents/${editDocId}/`, { parsed_json: newSections });
-      setParsedSectionsMap((old) => ({ ...old, [editDocId]: newSections }));
+      const res = await API.patch(`/documents/${editDocId}/`, { parsed_json: newSections });
+      const updated = res.data.parsed_json || [];
+      setParsedSectionsMap((old) => ({ ...old, [editDocId]: updated }));
     } catch (error) {
       console.error(error);
-      alert('Gagal mengupdate nilai sel.');
+      // alert('Gagal mengupdate nilai sel.');
     }
   }
 
@@ -331,7 +362,7 @@ function DocumentTable({ documents, refreshDocuments }) {
       setParsedSectionsMap((old) => ({ ...old, [editDocId]: newSections }));
     } catch (error) {
       console.error(error);
-      alert('Gagal mengupdate subtotal.');
+      // alert('Gagal mengupdate subtotal.');
     }
   }
 
@@ -351,7 +382,7 @@ function DocumentTable({ documents, refreshDocuments }) {
       setParsedSectionsMap((old) => ({ ...old, [editDocId]: newSections }));
     } catch (error) {
       console.error(error);
-      alert('Gagal mengupdate grand total.');
+      // alert('Gagal mengupdate grand total.');
     }
   }
 
@@ -370,6 +401,10 @@ function DocumentTable({ documents, refreshDocuments }) {
       alert('Lengkapi info dok pendukung terlebih dahulu!');
       return;
     }
+    
+    // Get the existing REF_CODE for this item
+    const currentRefCode = parsedSectionsMap[attachDocMainId][attachDocSectionIndex].table[attachDocRowIndex + 1].slice(-1)[0];
+  
     try {
       for (const file of attachDocFiles) {
         const formData = new FormData();
@@ -378,6 +413,8 @@ function DocumentTable({ documents, refreshDocuments }) {
         formData.append('company_name', attachDocCompany);
         formData.append('section_index', attachDocSectionIndex);
         formData.append('row_index', attachDocRowIndex);
+        formData.append('item_ref_code', currentRefCode);  // <-- ADD THIS LINE
+        
         await API.post('/supporting-docs/', formData, {
           headers: { 'Content-Type': 'multipart/form-data' },
         });
@@ -386,14 +423,14 @@ function DocumentTable({ documents, refreshDocuments }) {
         params: { main_document: attachDocMainId },
       });
       setSupportingDocs((old) => ({ ...old, [attachDocMainId]: res.data }));
-      alert('Dokumen pendukung berhasil diupload!');
     } catch (err) {
       console.error(err);
-      alert('Gagal mengupload dokumen pendukung.');
+      // alert('Gagal mengupload dokumen pendukung.');
     } finally {
       setAttachDialogOpen(false);
     }
   }
+  
 
   function handleDeleteClick(doc) {
     setDocToDelete(doc);
@@ -405,9 +442,9 @@ function DocumentTable({ documents, refreshDocuments }) {
     try {
       await API.delete(`/documents/${docToDelete.id}/`);
       refreshDocuments();
-    } catch (err) {
-      console.error(err);
-      alert('Gagal menghapus dokumen utama.');
+    } catch (error) {
+      console.error(error);
+      // alert('Gagal menghapus dokumen utama.');
     } finally {
       setConfirmDialogOpen(false);
       setDocToDelete(null);
@@ -428,10 +465,10 @@ function DocumentTable({ documents, refreshDocuments }) {
         ...old,
         [mainId]: (old[mainId] || []).filter((d) => d.id !== supportingDocToDelete.id),
       }));
-      alert('Dokumen pendukung berhasil dihapus!');
+      // alert('Dokumen pendukung berhasil dihapus!');
     } catch (err) {
       console.error(err);
-      alert('Gagal menghapus dokumen pendukung.');
+      // alert('Gagal menghapus dokumen pendukung.');
     } finally {
       setConfirmSupportingDialogOpen(false);
       setSupportingDocToDelete(null);
@@ -449,11 +486,11 @@ function DocumentTable({ documents, refreshDocuments }) {
         status: 'rejected',
         reject_comment: reason,
       });
-      alert('Dokumen berhasil ditolak!');
+      // alert('Dokumen berhasil ditolak!');
       refreshDocuments();
     } catch (error) {
       console.error('Error rejecting document:', error);
-      alert('Gagal menolak dokumen.');
+      // alert('Gagal menolak dokumen.');
     }
   }
   
@@ -502,38 +539,74 @@ function DocumentTable({ documents, refreshDocuments }) {
     try {
       await API.patch(`/documents/${docToFinish.id}/`, { status: 'belum_disetujui' });
       refreshDocuments();
-      alert('Dokumen berhasil diselesaikan dan status menjadi Belum Disetujui.');
+      // alert('Dokumen berhasil diselesaikan dan status menjadi Belum Disetujui.');
     } catch (error) {
       console.error(error);
-      alert('Terjadi kesalahan saat menyelesaikan draf.');
+      // alert('Terjadi kesalahan saat menyelesaikan draf.');
     } finally {
       setConfirmFinishDraftOpen(false);
       setDocToFinish(null);
     }
   }
 
-  function handleOpenApproveDialog(doc) {
+  async function handleOpenApproveDialog(doc) {
+    // 1️⃣  Open dialog & ensure data is loaded
     setDocToApprove(doc);
+  
     let sDocs = supportingDocs[doc.id];
     if (!sDocs) {
-      API.get('/supporting-docs/', { params: { main_document: doc.id } }).then((res) => {
-        setUnapprovedDocs(res.data.filter((sd) => sd.status !== 'disetujui'));
-      });
-    } else {
-      setUnapprovedDocs(sDocs.filter((sd) => sd.status !== 'disetujui'));
+      try {
+        const res = await API.get('/supporting-docs/', { params: { main_document: doc.id } });
+        sDocs = res.data;
+        setSupportingDocs((old) => ({ ...old, [doc.id]: sDocs }));
+      } catch (err) {
+        console.error('Error fetching supporting docs', err);
+        sDocs = [];
+      }
     }
+  
+    let parsed = parsedSectionsMap[doc.id];
+    if (!parsed) {
+      try {
+        const res = await API.get(`/documents/${doc.id}/`);
+        parsed = res.data.parsed_json || [];
+        setParsedSectionsMap((old) => ({ ...old, [doc.id]: parsed }));
+      } catch (err) {
+        console.error('Error fetching parsed_json', err);
+        parsed = [];
+      }
+    }
+  
+    // 2️⃣  Build human‑readable list of unapproved docs with item description
+    const unapproved = (sDocs || [])
+      .filter((sd) => sd.status !== 'disetujui')
+      .map((sd) => {
+        let desc = '(Unknown Item)';
+        if (sd.section_index != null && sd.row_index != null) {
+          const section = parsed[sd.section_index];
+          const row     = section?.table?.[sd.row_index + 1]; // +1 skip header row
+          if (Array.isArray(row) && row.length > 1 && row[1]) {
+            desc = row[1]; // "KETERANGAN" column
+          }
+        }
+        return { ...sd, itemDescription: desc };
+      });
+  
+    // 3️⃣  Show dialog
+    setUnapprovedDocs(unapproved);
     setConfirmApproveOpen(true);
   }
+  
 
   async function handleConfirmApproveTagihan() {
     if (!docToApprove) return;
     try {
       await API.patch(`/documents/${docToApprove.id}/`, { status: 'disetujui' });
       refreshDocuments();
-      alert(`Tagihan "${docToApprove.title}" berhasil disetujui!`);
+      // alert(`Tagihan "${docToApprove.title}" berhasil disetujui!`);
     } catch (err) {
       console.error(err);
-      alert('Gagal menyetujui tagihan.');
+      // alert('Gagal menyetujui tagihan.');
     } finally {
       setConfirmApproveOpen(false);
       setDocToApprove(null);
@@ -544,7 +617,14 @@ function DocumentTable({ documents, refreshDocuments }) {
   // Helpers for formatting
   function formatIndoDateTime(dateString) {
     if (!dateString) return '';
-    return new Date(dateString).toLocaleString('id-ID');
+    const dt = new Date(dateString);
+    const date = dt.toLocaleDateString('en-GB', {
+      day: 'numeric', month: 'long', year: 'numeric',
+    });
+    const time = dt.toLocaleTimeString('en-GB', {
+      hour: '2-digit', minute: '2-digit', hour12: false,
+    });
+    return `${date}, ${time}`;
   }
   function formatDocType(value) {
     return value
@@ -558,17 +638,76 @@ function DocumentTable({ documents, refreshDocuments }) {
     return value ? value.toUpperCase() : '';
   }
 
+  function openPayDialog({ docId, sectionIndex, rowIndex, row, headers }) {
+    const refCode  = row[row.length - 1];   
+    const payIdx   = headers.indexOf('PAY_REF');
+    const current  = payIdx !== -1 && row.length > payIdx ? row[payIdx] : '';
+    setPayCtx({ docId, sectionIndex, rowIndex, refCode });
+    setPayDlgDefault(current);
+    setPayDlgOpen(true);
+  }
+
+  async function handleSavePayRef(newRef) {
+    if (!payCtx) return;
+  
+    const { docId, refCode, sectionIndex, rowIndex } = payCtx;
+  
+    try {
+      /* ───── 1️⃣  Persist to backend ───── */
+      await API.patch(`/documents/${docId}/`, {
+        item_payment_refs: { [refCode]: newRef },
+      });
+  
+      /* ───── 2️⃣  Update local cache ───── */
+      setParsedSectionsMap((old) => {
+        const sections = [...(old[docId] || [])];
+        const section  = sections[sectionIndex];
+        if (!section) return old;
+  
+        const headers = section.table[0];
+        let payIdx    = headers.indexOf('PAY_REF');
+  
+        /* — add PAY_REF column if it didn’t exist — */
+        if (payIdx === -1) {
+          headers.push('PAY_REF');
+          payIdx = headers.length - 1;
+  
+          /* pad **all** existing rows so r[payIdx] is defined */
+          section.table.slice(1).forEach((r) => {
+            while (r.length <= payIdx) r.push('');
+          });
+        }
+  
+        /* ensure the specific row is long enough, then write the value */
+        const row = section.table[rowIndex + 1];
+        while (row.length <= payIdx) row.push('');
+        row[payIdx] = newRef;
+  
+        return { ...old, [docId]: sections };
+      });
+  
+      // alert('Referensi pembayaran tersimpan.');
+    } catch (err) {
+      console.error(err);
+      // alert('Gagal menyimpan referensi pembayaran.');
+    } finally {
+      setPayDlgOpen(false);
+      setPayCtx(null);
+    }
+  }
+  
+
   async function handleSetPaymentReference(doc, reference) {
     try {
       await API.patch(`/documents/${doc.id}/`, {
         status: 'sudah_dibayar',
         payment_reference: reference,
       });
-      alert('Referensi pembayaran berhasil disimpan, dokumen sekarang statusnya "Sudah Dibayar"!');
+      // alert('Referensi pembayaran berhasil disimpan, dokumen sekarang statusnya "Sudah Dibayar"!');
       refreshDocuments(); // untuk merefresh tabel
     } catch (error) {
       console.error('Error menyimpan referensi pembayaran:', error);
-      alert('Gagal menyimpan referensi pembayaran.');
+      // alert('Gagal menyimpan referensi pembayaran.');
     }
   }
   
@@ -598,11 +737,7 @@ function DocumentTable({ documents, refreshDocuments }) {
           <Typography variant="subtitle1" sx={{ fontWeight: 'bold' }}>
             GRAND TOTAL:
           </Typography>
-          <EditableInlineText
-            value={section.grand_total || ''}
-            canEdit={canEditMainDocument(userRole, docStatus)}
-            onChange={(newVal) => handleUpdateGrandTotal(sectionIndex, newVal)}
-          />
+          <Typography variant="subtitle1">{section.grand_total || '-'}</Typography>
         </Box>
 
         {/* Tombol Setujui Tagihan dan Tolak */}
@@ -628,16 +763,16 @@ function DocumentTable({ documents, refreshDocuments }) {
 
         {/* Tombol Tambah Referensi Pembayaran */}
         {userRole === 'higher-up' && docStatus === 'disetujui' && (
-          <Button
-            variant="contained"
-            color="info"
-            onClick={() => {
-              const reference = prompt('Masukkan Referensi Pembayaran:');
-              if (reference) handleSetPaymentReference(docObj, reference);
-            }}
-          >
-            Masukkan Referensi Pembayaran
-          </Button>
+          <Box sx={{ display:'flex', justifyContent:'flex-end', mt:3 }}>
+            <Button
+              variant="contained"
+              color="success"
+              disabled={docStatus !== 'disetujui' || hasMissingPayRef(docObj.id)}
+              onClick={() => { setPayDoneDoc(docObj); setPayDoneDlgOpen(true); }}
+            >
+              Selesaikan Pembayaran
+            </Button>
+          </Box>
         )}
 
         {/* Tombol Hapus setelah dokumen ditolak */}
@@ -720,16 +855,19 @@ function DocumentTable({ documents, refreshDocuments }) {
             <Table size="small" sx={{ tableLayout: 'fixed', width: '100%' }}>
               <TableHead>
                 <TableRow>
-                  {headerRow.map((headerCell, i) => {
-                    let cellWidth = '20%';
-                    if (headerCell.toUpperCase() === 'NO') cellWidth = '5%';
-                    else if (headerCell.toUpperCase() === 'KETERANGAN') cellWidth = '40%';
-                    return (
-                      <TableCell key={`header-${i}`} sx={{ fontWeight: 'bold', width: cellWidth }}>
-                        {headerCell}
-                      </TableCell>
-                    );
-                  })}
+                  {headerRow
+                    .filter((h) => h.toUpperCase() !== 'REF_CODE')
+                    .map((headerCell, i) => {
+                      let cellWidth = '20%';
+                      if (headerCell.toUpperCase() === 'NO') cellWidth = '5%';
+                      else if (headerCell.toUpperCase() === 'KETERANGAN') cellWidth = '40%';
+                      // no need for REF_CODE width
+                      return (
+                        <TableCell key={`header-${i}`} sx={{ fontWeight: 'bold', width: cellWidth }}>
+                          {headerCell}
+                        </TableCell>
+                      );
+                    })}
                   <TableCell sx={{ fontWeight: 'bold', width: '20%' }}>Aksi</TableCell>
                 </TableRow>
               </TableHead>
@@ -739,33 +877,56 @@ function DocumentTable({ documents, refreshDocuments }) {
                     (sd) => sd.section_index === sectionIndex && sd.row_index === rowIndex
                   );
                   const expanded = !!itemDocsExpandedMap[`${docId}-${sectionIndex}-${rowIndex}`];
+                  const rowClickable = docStatus !== 'draft' && docStatus !== 'rejected';
 
                   return (
                     <React.Fragment key={rowIndex}>
                       <TableRow
+                        hover={rowClickable}
+                        onClick={
+                          rowClickable
+                            ? () => handleToggleItemDocs(docId, sectionIndex, rowIndex)
+                            : undefined
+                        }
                         sx={{
-                          backgroundColor: rowIndex % 2 === 0 ? 'white' : '#fafafa',
+                          backgroundColor:
+                            rowIndex % 2 === 0
+                              ? isDark
+                                ? theme.palette.background.paper
+                                : 'white'
+                              : isDark
+                                ? theme.palette.background.default
+                                : '#fafafa',
+                          cursor: rowClickable ? 'pointer' : 'default',
+                          '&:hover': rowClickable
+                            ? { backgroundColor: isDark ? theme.palette.action.hover : 'rgba(25,118,210,0.08)' }
+                            : undefined,
                         }}
                       >
-                        {row.map((cell, cellIndex) => (
-                          <EditableTableCell
-                            key={cellIndex}
-                            value={cell}
-                            canEdit={canEditMainDocument(userRole, docStatus)}
-                            onChangeValue={(newVal) =>
-                              handleUpdateCell(sectionIndex, rowIndex, cellIndex, newVal)
-                            }
-                          />
-                        ))}
+                        {row.map((cell, cellIndex) => {
+                          const isRefCodeColumn = headerRow[cellIndex]?.toUpperCase() === 'REF_CODE';
+                          if (isRefCodeColumn) return null;
+                          return (
+                            <EditableTableCell
+                              key={cellIndex}
+                              value={cell}
+                              canEdit={!isRefCodeColumn && canEditMainDocument(userRole, docStatus)} // REF_CODE non-editable
+                              onChangeValue={(newVal) =>
+                                handleUpdateCell(sectionIndex, rowIndex, cellIndex, newVal)
+                              }
+                            />
+                          );
+                        })}
                         <TableCell>
                           <Box sx={{ display: 'inline-flex', gap: 1 }}>
                             {canEditMainDocument(userRole, docStatus) && (
                               <Button
                                 variant="outlined"
                                 size="small"
-                                onClick={() =>
-                                  handleAttachDocClick(docId, company, sectionIndex, rowIndex)
-                                }
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleAttachDocClick(docId, company, sectionIndex, rowIndex);
+                                }}
                               >
                                 Dok
                               </Button>
@@ -773,7 +934,10 @@ function DocumentTable({ documents, refreshDocuments }) {
                             <IconButton
                               size="small"
                               color="primary"
-                              onClick={() => handleToggleItemDocs(docId, sectionIndex, rowIndex)}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleToggleItemDocs(docId, sectionIndex, rowIndex);
+                              }}
                             >
                               {expanded ? <KeyboardArrowUpIcon /> : <KeyboardArrowDownIcon />}
                             </IconButton>
@@ -781,7 +945,10 @@ function DocumentTable({ documents, refreshDocuments }) {
                               <IconButton
                                 size="small"
                                 color="error"
-                                onClick={() => handleRemoveSectionRow(sectionIndex, rowIndex)}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleRemoveSectionRow(sectionIndex, rowIndex);
+                                }}
                               >
                                 <DeleteIcon fontSize="small" />
                               </IconButton>
@@ -794,9 +961,7 @@ function DocumentTable({ documents, refreshDocuments }) {
                         <TableCell colSpan={headerRow.length + 1} sx={{ p: 0 }}>
                           <Collapse in={expanded} timeout="auto" unmountOnExit>
                             <Box sx={{ m: 2 }}>
-                              <Typography variant="body2" sx={{ fontWeight: 'bold', mb: 1 }}>
-                                Dokumen Pendukung: {itemDocs.length}
-                              </Typography>
+                              {/* NEW header — shows current position + total */}
                               <ItemDocsPreview
                                 itemDocs={itemDocs}
                                 userRole={userRole}
@@ -813,6 +978,31 @@ function DocumentTable({ documents, refreshDocuments }) {
                                   });
                                 }}
                               />
+                              {userRole === 'higher-up' && docStatus === 'disetujui' && (
+                                <Box sx={{ mt: 2, textAlign: 'right' }}>
+                                  {(() => {
+                                    const payIdx = headerRow.indexOf('PAY_REF');
+                                    const payVal =
+                                      payIdx !== -1 && row.length > payIdx ? (row[payIdx] || '').trim() : '';
+                                    return payVal ? (
+                                      <Typography variant="body2">
+                                        <strong>PAY_REF:</strong> {payVal}
+                                      </Typography>
+                                    ) : (
+                                      <Button
+                                        variant="contained"
+                                        size="small"
+                                        color="info"
+                                        onClick={() =>
+                                          openPayDialog({ docId, sectionIndex, rowIndex, row, headers: headerRow })
+                                        }
+                                      >
+                                        Masukkan Referensi Pembayaran
+                                      </Button>
+                                    );
+                                  })()}
+                                </Box>
+                              )}
                             </Box>
                           </Collapse>
                         </TableCell>
@@ -856,11 +1046,7 @@ function DocumentTable({ documents, refreshDocuments }) {
             <Typography variant="body2" sx={{ fontWeight: 'bold' }}>
               Subtotal:
             </Typography>
-            <EditableInlineText
-              value={subtotal || ''}
-              canEdit={canEditMainDocument(userRole, docStatus)}
-              onChange={(newVal) => handleUpdateSubtotal(sectionIndex, newVal)}
-            />
+            <Typography variant="body2">{subtotal || '-'}</Typography>
           </Box>
         </Paper>
       );
@@ -889,10 +1075,22 @@ function DocumentTable({ documents, refreshDocuments }) {
               const isExpanded = expandedRows.includes(doc.id);
               return (
                 <React.Fragment key={doc.id}>
-                  <TableRow>
+                  <TableRow
+                    hover
+                    onClick={() => toggleRow(doc.id, doc.doc_type)}
+                    sx={{
+                      cursor: expandDocTypes.includes(doc.doc_type) ? 'pointer' : 'default',
+                      '&:hover': {
+                        backgroundColor: 'rgba(25, 118, 210, 0.08)',
+                      },
+                    }}
+                  >
                     <TableCell>
                       {expandDocTypes.includes(doc.doc_type) && (
-                        <IconButton size="small" onClick={() => toggleRow(doc.id, doc.doc_type)}>
+                        <IconButton size="small" onClick={(e) => {
+                          e.stopPropagation();
+                          toggleRow(doc.id, doc.doc_type);
+                        }}>
                           {isExpanded ? <KeyboardArrowUpIcon /> : <KeyboardArrowDownIcon />}
                         </IconButton>
                       )}
@@ -1009,6 +1207,8 @@ function DocumentTable({ documents, refreshDocuments }) {
                       </TableCell>
                     </TableRow>
                   )}
+
+
                 </React.Fragment>
               );
             })}
@@ -1082,6 +1282,32 @@ function DocumentTable({ documents, refreshDocuments }) {
         open={confirmReviseOpen}
         onClose={() => setConfirmReviseOpen(false)}
         onConfirm={handleReviseConfirm}
+      />
+
+      <PaymentReferenceDialog
+        open={payDlgOpen}
+        onClose={() => setPayDlgOpen(false)}
+        defaultValue={payDlgDefault}
+        onSave={handleSavePayRef}
+      />
+
+      <PaymentCompleteDialog
+        open={payDoneDlgOpen}
+        onClose={() => setPayDoneDlgOpen(false)}
+        onConfirm={async () => {
+          if (!payDoneDoc) return;
+          try {
+            await API.patch(`/documents/${payDoneDoc.id}/`, { status: 'sudah_dibayar' });
+            refreshDocuments();
+            // alert('Status berubah menjadi “Sudah Dibayar”.');
+          } catch (err) {
+            console.error(err);
+            // alert('Gagal menyelesaikan pembayaran.');
+          } finally {
+            setPayDoneDlgOpen(false);
+            setPayDoneDoc(null);
+          }
+        }}
       />
     </>
     </>

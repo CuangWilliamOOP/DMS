@@ -3,12 +3,12 @@
 import os
 from pathlib import Path
 
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = "django-insecure-s!!7+v-#(kl^j!q!koj45u1!n0i$_r@$r*mljhr!x4--a+2=n+"
 DEBUG = True
 ALLOWED_HOSTS = ["*"]
-DATA_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024
-
+DATA_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024 
 X_FRAME_OPTIONS = 'ALLOWALL'
 XS_SHARING_ALLOWED_METHODS = ['POST', 'GET', 'OPTIONS', 'PUT', 'DELETE']
 
@@ -24,6 +24,7 @@ INSTALLED_APPS = [
     'corsheaders',
     "django_fsm", 
     "django_cleanup.apps.CleanupConfig",
+    "rest_framework.authtoken",
 ]
 
 MIDDLEWARE = [
@@ -91,5 +92,5 @@ TIME_ZONE = "UTC"
 USE_I18N = True
 USE_TZ = True
 
-STATIC_URL = "static/"
+STATIC_URL = "/static/"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"

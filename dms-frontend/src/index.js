@@ -3,6 +3,14 @@ import ReactDOM from 'react-dom/client';
 import './index.css';
 import App from './App';
 import reportWebVitals from './reportWebVitals';
+import { Buffer } from 'buffer';
+import process from 'process';
+import stream from 'stream-browserify';
+
+if (!window.Buffer)   window.Buffer   = Buffer;
+if (!window.process)  window.process  = process;
+if (!window.stream)   window.stream   = stream; 
+
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(

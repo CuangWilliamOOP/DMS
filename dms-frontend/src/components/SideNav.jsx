@@ -1,45 +1,32 @@
 // File: src/components/SideNav.jsx
-// fix(src/components/SideNav.jsx): remove "Tambah Dokumen" for boss, rename "Tambah Direktori" to "Direktori"
+// Perubahan: izinkan 'owner' juga melihat link Tambah Dokumen
 
-import React from 'react';
+import React, { useState } from 'react';
 import {
-  Drawer,
-  Toolbar,
-  List,
-  ListItem,
-  ListItemButton,
-  ListItemIcon,
-  ListItemText,
-  Box,
-  Typography
+  Drawer, Toolbar, List, ListItem, ListItemButton,
+  ListItemIcon, ListItemText, Box, Typography
 } from '@mui/material';
 import HomeIcon from '@mui/icons-material/Home';
 import AddBoxIcon from '@mui/icons-material/AddBox';
 import FolderOpenIcon from '@mui/icons-material/FolderOpen';
 import SearchIcon from '@mui/icons-material/Search';
 import SettingsIcon from '@mui/icons-material/Settings';
-
-// Import Link dari react-router-dom
 import { Link } from 'react-router-dom';
+import PengaturanDialog from '../components/SettingsDialog';
 
 function SideNav() {
-  // Ambil role user (employee / higher-up) dari local storage
-  const userRole = localStorage.getItem('role'); // "employee" | "higher-up" | null
+  const userRole = localStorage.getItem('role'); // 'employee' | 'owner' | 'higher-up'
+  const [dlgOpen, setDlgOpen] = useState(false);
 
   return (
     <Drawer
       variant="permanent"
       sx={{
         zIndex: (theme) => theme.zIndex.appBar - 1,
-        '& .MuiDrawer-paper': {
-          top: 0,
-          height: '100vh',
-          width: 200,
-          boxSizing: 'border-box',
-        },
+        '& .MuiDrawer-paper': { top: 0, height: '100vh', width: 200, boxSizing: 'border-box' }
       }}
     >
-      <Toolbar sx={{ minHeight: '48px' }} />  
+      <Toolbar />
       <List>
         {/* Beranda */}
         <ListItem disablePadding>
@@ -49,8 +36,8 @@ function SideNav() {
           </ListItemButton>
         </ListItem>
 
-        {/* Tambah Dokumen */}
-        {userRole === 'employee' && (
+        {/* Tambah Dokumen – sekarang untuk employee *dan* owner */}
+        {['employee', 'owner'].includes(userRole) && (
           <ListItem disablePadding>
             <ListItemButton component={Link} to="/add">
               <ListItemIcon><AddBoxIcon /></ListItemIcon>
@@ -59,7 +46,7 @@ function SideNav() {
           </ListItem>
         )}
 
-        {/* Rename: "Tambah Direktori" → "Direktori" */}
+        {/* Direktori */}
         <ListItem disablePadding>
           <ListItemButton component={Link} to="/directory">
             <ListItemIcon><FolderOpenIcon /></ListItemIcon>
@@ -67,6 +54,7 @@ function SideNav() {
           </ListItemButton>
         </ListItem>
 
+        {/* Menu lain - belum di-gatelin */}
         <ListItem disablePadding>
           <ListItemButton>
             <ListItemIcon><SearchIcon /></ListItemIcon>
@@ -74,7 +62,7 @@ function SideNav() {
           </ListItemButton>
         </ListItem>
         <ListItem disablePadding>
-          <ListItemButton>
+          <ListItemButton onClick={() => setDlgOpen(true)}>
             <ListItemIcon><SettingsIcon /></ListItemIcon>
             <ListItemText primary="Pengaturan" />
           </ListItemButton>
@@ -82,15 +70,11 @@ function SideNav() {
       </List>
 
       <Box sx={{ flexGrow: 1 }} />
-
       <Box sx={{ p: 2 }}>
-        <Typography variant="body2" color="text.secondary">
-          Dipersembahkan oleh skip5
-        </Typography>
-        <Typography variant="caption" color="text.secondary">
-          Versi 1.0.5
-        </Typography>
+        <Typography variant="body2" color="text.secondary">Dipersembahkan oleh skip5</Typography>
+        <Typography variant="caption" color="text.secondary">Versi 1.0.6</Typography>
       </Box>
+      <PengaturanDialog open={dlgOpen} onClose={() => setDlgOpen(false)} />
     </Drawer>
   );
 }

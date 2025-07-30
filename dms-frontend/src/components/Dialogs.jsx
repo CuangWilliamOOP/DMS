@@ -1,5 +1,5 @@
 // src/components/Dialogs.jsx
-import React from 'react';
+import React, { useState } from 'react';
 import { Dialog, DialogTitle, DialogContent, DialogContentText, DialogActions, Button, Box, Typography, TextField } from '@mui/material';
 
 // Dialog Hapus Dokumen Utama
@@ -108,7 +108,7 @@ export const ApproveTagihanDialog = ({ open, onClose, unapprovedDocs, onConfirm 
           <Typography variant="subtitle2" fontWeight="bold">Dokumen Pendukung Belum Disetujui:</Typography>
           <ul>
             {unapprovedDocs.map((ud) => (
-              <li key={ud.id}>{ud.title || '(Untitled)'} - Status: {ud.status}</li>
+              <li key={ud.id}>{ud.itemDescription || ud.title || '(Untitled)'} </li>
             ))}
           </ul>
         </Box>
@@ -155,3 +155,68 @@ export const ReviseConfirmationDialog = ({ open, onClose, onConfirm }) => (
     </DialogActions>
   </Dialog>
 );
+
+/* --- Konfirmasi Selesaikan Pembayaran --- */
+export const PaymentCompleteDialog = ({ open, onClose, onConfirm }) => (
+  <Dialog open={open} onClose={onClose}>
+    <DialogTitle>Konfirmasi Selesaikan Pembayaran</DialogTitle>
+    <DialogContent>
+      <DialogContentText>
+        Semua item sudah memiliki <strong>PAY_REF</strong>. Klik “Selesaikan” untuk menandai
+        dokumen ini sebagai <em>Sudah Dibayar</em>. Tindakan ini tidak dapat dibatalkan.
+      </DialogContentText>
+    </DialogContent>
+    <DialogActions>
+      <Button onClick={onClose} color="inherit">Batal</Button>
+      <Button onClick={onConfirm} variant="contained" color="success">Selesaikan</Button>
+    </DialogActions>
+  </Dialog>
+);
+
+
+
+
+/* -- NEW: dialog untuk input / edit PAY_REF per-item -- */
+export const PaymentReferenceDialog = ({
+  open,
+  onClose,
+  onSave,
+  defaultValue = '',
+}) => {
+  const [refValue, setRefValue] = useState(defaultValue);
+
+  const handleSave = () => {
+    if (!refValue.trim()) {
+      alert('Referensi pembayaran tidak boleh kosong.');
+      return;
+    }
+    onSave(refValue.trim());
+  };
+
+  return (
+    <Dialog open={open} onClose={onClose}>
+      <DialogTitle>Masukkan Referensi Pembayaran</DialogTitle>
+      <DialogContent>
+        <DialogContentText>
+          Isi nomor / kode referensi transfer untuk item ini.
+        </DialogContentText>
+        <TextField
+          fullWidth
+          autoFocus
+          margin="dense"
+          label="PAY_REF"
+          value={refValue}
+          onChange={(e) => setRefValue(e.target.value)}
+        />
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={onClose} color="inherit">
+          Batal
+        </Button>
+        <Button onClick={handleSave} variant="contained">
+          Simpan
+        </Button>
+      </DialogActions>
+    </Dialog>
+  );
+};

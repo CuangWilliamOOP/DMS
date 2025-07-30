@@ -12,21 +12,29 @@ import {
   IconButton,
   CircularProgress,
   Snackbar,
-  Alert
+  Alert,
+  Paper,
+  Chip,
+  Slide
 } from '@mui/material';
+import { useTheme } from '@mui/material/styles';
 import ClearIcon from '@mui/icons-material/Clear';
 import { useNavigate } from 'react-router-dom';
 import API from '../services/api';
 import CloudUploadIcon from '@mui/icons-material/CloudUpload';
+import { motion } from 'framer-motion';
+
+const slideUp = (props) => <Slide {...props} direction="up" />;
 
 function AddDocumentForm() {
+  const theme = useTheme();
+  const isDark = theme.palette.mode === 'dark';
   const navigate = useNavigate();
 
   // Form fields
   const [title, setTitle] = useState('');
   const [company, setCompany] = useState('');
-  const [docType, setDocType] = useState('');
-  const [description, setDescription] = useState('');
+  const [docType, setDocType] = useState('tagihan_pekerjaan');
   const [file, setFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState(null);
 
@@ -44,12 +52,7 @@ function AddDocumentForm() {
     { value: 'asn', label: 'ASN (Alam Subur Nusantara)' },
   ];
   const documentTypes = [
-    { value: 'ledger_lokasi', label: 'Ledger per Lokasi' },
-    { value: 'tagihan_pekerjaan', label: 'Tagihan Pekerjaan (BAPP)' },
-    { value: 'pembayaran_pekerjaan', label: 'Pembayaran Pekerjaan (BAPP)' },
-    { value: 'pembelian_sparepart', label: 'Pembelian Sparepart' },
-    { value: 'penggantian_kas_kantor', label: 'Penggantian Kas Kantor' },
-    { value: 'biaya_pengeluaran_proyek', label: 'Biaya Pengeluaran Proyek' },
+    { value: 'tagihan_pekerjaan', label: 'Tagihan Pekerjaan' },
   ];
 
   // Handle file drop
@@ -91,7 +94,6 @@ function AddDocumentForm() {
     formData.append('title', title);
     formData.append('company', company);
     formData.append('doc_type', docType);
-    formData.append('description', description);
     if (file) formData.append('file', file);
 
     try {
@@ -123,127 +125,175 @@ function AddDocumentForm() {
 
   return (
     <>
-      <Box sx={{ display: 'flex', gap: 4, width: '100%', maxWidth: '900px', p: 2 }}>
-        {/* Dropzone for file upload */}
-        <Box
-          {...getRootProps()}
-          sx={{
-            flex: 1,
-            height: 400,
-            border: '3px dashed #90caf9',
-            borderRadius: 3,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            bgcolor: isDragActive ? '#e3f2fd' : '#fafafa',
-            cursor: 'pointer',
-            flexDirection: 'column',
-            transition: 'background-color 0.3s ease',
-            '&:hover': {
-              bgcolor: '#e3f2fd',
-            },
-          }}
-        >
-          <input {...getInputProps()} disabled={isSubmitting} />
-          {file ? (
-            <>
-              <Typography variant="subtitle1" sx={{ fontWeight: 'bold', mt: 2 }}>
-                {file.name}
-              </Typography>
-              <IconButton color="error" onClick={handleClearFile} disabled={isSubmitting}>
-                <ClearIcon />
-              </IconButton>
-              {previewUrl && ['image/jpeg', 'image/png', 'image/jpg'].includes(file.type) && (
-                <img
-                  src={previewUrl}
-                  alt="Preview"
-                  style={{ width: '100%', maxHeight: 180, marginTop: 10, borderRadius: 8 }}
-                />
-              )}
-            </>
-          ) : (
-            <>
-              <CloudUploadIcon sx={{ fontSize: 60, color: '#90caf9', mb: 1 }} />
-              <Typography variant="h6" color="textSecondary">
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5 }}
+      >
+        <Paper elevation={2} sx={{
+          p: 4,
+          display: 'flex',
+          gap: 4,
+          borderRadius: 3,
+          width: '100%',
+          maxWidth: { xs: 1, md: 1100 },
+          position: 'relative'
+        }}>
+          {/* Dropzone for file upload */}
+          <Box
+            {...getRootProps()}
+            sx={{
+              flex: 1,
+              height: 420,
+              border: '2px dashed',
+              borderColor: isDragActive ? 'primary.main' : 'divider',
+              borderRadius: 2,
+              bgcolor: isDragActive
+                ? (isDark ? 'primary.dark' : '#e3f2fd')
+                : (isDark ? 'background.paper' : '#fafafa'),
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              transition: 'all .25s ease',
+              '&:hover': {
+                boxShadow: 4,
+                borderColor: 'primary.main',
+              },
+            }}
+          >
+            <input {...getInputProps()} disabled={isSubmitting} />
+            {file ? (
+              <>
+                <Typography variant="subtitle1" sx={{ fontWeight: 'bold', mt: 2, display: 'flex', alignItems: 'center' }}>
+                  {file.name}
+                  {file.type && (
+                    <Chip
+                      label={file.type.split('/')[1]?.toUpperCase()}
+                      size="small"
+                      color="primary"
+                      sx={{ ml: 1 }}
+                    />
+                  )}
+                </Typography>
+                <IconButton color="error" onClick={handleClearFile} disabled={isSubmitting}>
+                  <ClearIcon />
+                </IconButton>
+                {previewUrl && ['image/jpeg', 'image/png', 'image/jpg'].includes(file.type) && (
+                  <img
+                    src={previewUrl}
+                    alt="Preview"
+                    style={{ width: '100%', maxHeight: 180, marginTop: 10, borderRadius: 8 }}
+                  />
+                )}
+              </>
+            ) : (
+              <motion.div
+                animate={{ y: [0, -6, 0] }}
+                transition={{ repeat: Infinity, duration: 2 }}
+              >
+                <CloudUploadIcon sx={{ fontSize: 60, color: '#90caf9' }} />
+              </motion.div>
+            )}
+            {!file && (
+              <Typography variant="h6" color="textSecondary" sx={{ mt: 2 }}>
                 {isDragActive ? 'Lepaskan file di sini!' : 'Seret file ke sini atau klik untuk unggah'}
               </Typography>
-            </>
-          )}
-        </Box>
+            )}
+          </Box>
 
-        {/* Form fields */}
-        <Box
-          component="form"
-          onSubmit={handleSubmit}
-          sx={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 2 }}
-        >
-          <TextField
-            label="Judul Dokumen"
-            required
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            disabled={isSubmitting}
-          />
-          <FormControl required disabled={isSubmitting}>
-            <InputLabel>Perusahaan</InputLabel>
-            <Select
-              value={company}
-              label="Perusahaan"
-              onChange={(e) => setCompany(e.target.value)}
+          {/* Form fields */}
+          <Box
+            component="form"
+            onSubmit={handleSubmit}
+            sx={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 2 }}
+          >
+            <Typography variant="h6" fontWeight="bold" gutterBottom>
+              Informasi Dokumen
+            </Typography>
+            <TextField
+              label="Judul Dokumen"
+              required
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              disabled={isSubmitting}
+            />
+            <FormControl required disabled={isSubmitting}>
+              <InputLabel>Perusahaan</InputLabel>
+              <Select
+                value={company}
+                label="Perusahaan"
+                onChange={(e) => setCompany(e.target.value)}
+              >
+                {companies.map((c) => (
+                  <MenuItem key={c.value} value={c.value}>
+                    {c.label}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+            <FormControl required disabled>
+              <InputLabel>Jenis Dokumen</InputLabel>
+              <Select
+                value={docType}
+                label="Jenis Dokumen"
+                onChange={(e) => setDocType(e.target.value)}
+              >
+                {documentTypes.map((dt) => (
+                  <MenuItem key={dt.value} value={dt.value}>
+                    {dt.label}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+            <Button
+              type="submit"
+              variant="contained"
+              sx={{
+                mt: 3,
+                py: 1.5,
+                fontWeight: 600,
+                textTransform: 'none',
+                background:
+                  'linear-gradient(90deg, #1976d2 0%, #45a1ff 50%, #1976d2 100%)',
+                backgroundSize: '200%',
+                transition: 'background-position .4s',
+                '&:hover': { backgroundPosition: 'right' },
+              }}
+              disabled={isSubmitting}
             >
-              {companies.map((c) => (
-                <MenuItem key={c.value} value={c.value}>
-                  {c.label}
-                </MenuItem>
-              ))}
-            </Select>
-          </FormControl>
-
-          <FormControl required disabled={isSubmitting}>
-            <InputLabel>Jenis Dokumen</InputLabel>
-            <Select
-              value={docType}
-              label="Jenis Dokumen"
-              onChange={(e) => setDocType(e.target.value)}
-            >
-              {documentTypes.map((dt) => (
-                <MenuItem key={dt.value} value={dt.value}>
-                  {dt.label}
-                </MenuItem>
-              ))}
-            </Select>
-          </FormControl>
-
-          <TextField
-            label="Deskripsi (Opsional)"
-            multiline
-            rows={3}
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            disabled={isSubmitting}
-          />
-
-          {isSubmitting ? (
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-              <CircularProgress size={24} />
-              <Typography variant="body2" color="textSecondary">
-                Tunggu, sistem sedang memproses dokumen...
-              </Typography>
-            </Box>
-          ) : (
-            <Button type="submit" variant="contained" sx={{ mt: 2 }}>
               Proses GPT Vision
             </Button>
+          </Box>
+          {isSubmitting && (
+            <Box
+              sx={{
+                position: 'absolute',
+                inset: 0,
+                bgcolor: 'rgba(255,255,255,.7)',
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                borderRadius: 3,
+                zIndex: 10,
+              }}
+            >
+              <CircularProgress />
+              <Typography variant="body2" sx={{ mt: 2 }}>
+                Memproses dokumen…
+              </Typography>
+            </Box>
           )}
-        </Box>
-      </Box>
-
+        </Paper>
+      </motion.div>
       {/* Snackbar for success/error messages */}
       <Snackbar
         open={snackbarOpen}
         autoHideDuration={6000}
         onClose={handleCloseSnackbar}
         anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+        TransitionComponent={slideUp}
       >
         <Alert onClose={handleCloseSnackbar} severity={snackbarSeverity} sx={{ width: '100%' }}>
           {snackbarMessage}
