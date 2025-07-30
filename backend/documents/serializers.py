@@ -3,7 +3,7 @@
 
 from rest_framework import serializers
 
-from .models import Document, SupportingDocument
+from .models import Document, SupportingDocument, UserSettings
 
 
 class DocumentSerializer(serializers.ModelSerializer):
@@ -35,3 +35,9 @@ class SupportingDocumentSerializer(serializers.ModelSerializer):
             "approved_at",
             "created_at",
         )
+
+
+class UserSettingsSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = UserSettings
+        fields = ("idle_timeout",)

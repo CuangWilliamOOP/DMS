@@ -5,24 +5,26 @@ import tempfile
 import fitz
 from PIL import Image, ImageDraw, ImageFont
 from django.conf import settings
+from django.contrib.auth import authenticate
 from django.core.files import File
 from django.http import JsonResponse
 from django.utils import timezone
 from rest_framework import status as drf_status, viewsets
-from rest_framework.decorators import api_view, action
-from rest_framework.permissions import AllowAny
+from rest_framework.decorators import api_view, action, permission_classes
+from rest_framework.generics import RetrieveUpdateAPIView
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 
 from .gpt_parser import gpt_parse_subsections_from_image
-from .models import Document, SupportingDocument
-from .serializers import DocumentSerializer, SupportingDocumentSerializer
-from .utils import generate_unique_item_ref_code
+from .models import Document, SupportingDocument, UserSettings
+from .serializers import DocumentSerializer, SupportingDocumentSerializer, UserSettingsSerializer
+from .utils import generate_unique_item_ref_code, recalc_totals
 
 
 class DocumentViewSet(viewsets.ModelViewSet):
     queryset = Document.objects.all().order_by("-created_at")
     serializer_class = DocumentSerializer
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
 
     def _all_rows_have_pay_ref(self, parsed_json: list[dict]) -> bool:
         """Return False if any row lacks a PAY_REF value."""
@@ -80,8 +82,12 @@ class DocumentViewSet(viewsets.ModelViewSet):
     def partial_update(self, request, *args, **kwargs):
         instance = self.get_object()
 
-        item_pay_refs: dict | None = request.data.pop("item_payment_refs", None)
+        # Force recalc on every parsed_json update
+        new_parsed = request.data.get("parsed_json", None)
+        if new_parsed is not None:
+            request.data["parsed_json"] = recalc_totals(new_parsed)
 
+        item_pay_refs: dict | None = request.data.pop("item_payment_refs", None)
         serializer = self.get_serializer(instance, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         new_status = serializer.validated_data.pop("status", None)
@@ -142,10 +148,10 @@ class DocumentViewSet(viewsets.ModelViewSet):
 
 class SupportingDocumentViewSet(viewsets.ModelViewSet):
     serializer_class = SupportingDocumentSerializer
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        qs = SupportingDocument.objects.all().order_by("-created_at")
+        qs = SupportingDocument.objects.all().order_by("supporting_doc_sequence")
         main_id = self.request.query_params.get("main_document")
         if main_id:
             qs = qs.filter(main_document_id=main_id)
@@ -283,3 +289,47 @@ def parse_and_store_view(request):
     os.remove(temp_path)
 
     return JsonResponse({"document_id": doc.id, "document_code": doc.document_code})
+
+
+@api_view(['POST'])
+def login_view(request):
+    username = request.data.get('username')
+    password = request.data.get('password')
+
+    user = authenticate(username=username, password=password)
+    
+    if user:
+        group_names = list(user.groups.values_list('name', flat=True))
+        # Explicitly set role per group
+        if 'owner' in group_names:
+            role = 'owner'
+        elif 'boss' in group_names:
+            role = 'higher-up'
+        elif 'admin' in group_names:
+            role = 'employee'
+        else:
+            role = 'employee'
+        return Response({"role": role}, status=drf_status.HTTP_200_OK)
+
+    return Response({"error": "Invalid credentials"}, status=drf_status.HTTP_401_UNAUTHORIZED)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def user_info(request):
+    user = request.user
+    groups = list(user.groups.values_list('name', flat=True))
+    return Response({
+        "username": user.username,
+        "groups": groups,
+    })
+
+
+class UserSettingsView(RetrieveUpdateAPIView):
+    serializer_class = UserSettingsSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_object(self):
+        # create row on-the-fly the first time
+        obj, _ = UserSettings.objects.get_or_create(user=self.request.user)
+        return obj

@@ -45,6 +45,10 @@ const indoDateTime = (dt) =>
       })
     : '-';
 
+const sortBySeq = (a = []) => [...a].sort(
+  (x, y) => x.supporting_doc_sequence - y.supporting_doc_sequence
+);
+
 export default function DocumentPreviewPage() {
   const { companyName, dirKey, docCode } = useParams();
   const navigate = useNavigate();
@@ -63,7 +67,7 @@ export default function DocumentPreviewPage() {
           params: { main_document: r.data.id },
         });
       })
-      .then((r) => setSupport(r.data))
+      .then((r) => setSupport(sortBySeq(r.data)))
       .catch(console.error);
   }, [docCode]);
 

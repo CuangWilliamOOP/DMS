@@ -77,15 +77,19 @@ export function ItemDocsPreview({
   handleDeleteSupportingClick,
   onDocApproved,
 }) {
+  // Helper: always sort by supporting_doc_sequence
+  const sortBySeq = (arr = []) =>
+    [...arr].sort((a, b) => a.supporting_doc_sequence - b.supporting_doc_sequence);
+
   const [docs, setDocs] = useState(initialItemDocs || []);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [activeIdx, setActiveIdx] = useState(0); // track which doc is showing
   const [approvalDialogOpen, setApprovalDialogOpen] = useState(false);
   const [docToApprove, setDocToApprove] = useState(null);
 
-  // sinkronisasi prop → state
+  // sinkronisasi prop → state, always sorted
   useEffect(() => {
-    setDocs(initialItemDocs || []);
+    setDocs(sortBySeq(initialItemDocs));
   }, [initialItemDocs]);
 
   // Pastikan currentIndex valid

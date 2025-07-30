@@ -325,6 +325,8 @@ function DocumentTable({ documents, refreshDocuments }) {
     if (!section || !Array.isArray(section.table)) return;
     const dataRowIndex = rowIndex + 1;
     if (!section.table[dataRowIndex]) return;
+
+    // Step 1: Update the value locally
     const newTable = section.table.map((row, idx) =>
       idx === dataRowIndex
         ? row.map((cell, cIdx) => (cIdx === cellIndex ? newValue : cell))
@@ -336,13 +338,20 @@ function DocumentTable({ documents, refreshDocuments }) {
       newSection,
       ...oldSections.slice(sectionIndex + 1),
     ];
+
+    // Step 2: Instantly recalculate totals in local state (optimistic UI)
+    const recalcedSections = recalcTotals(JSON.parse(JSON.stringify(newSections)));
+    setParsedSectionsMap((old) => ({ ...old, [editDocId]: recalcedSections }));
+
+    // Step 3: Send PATCH to backend using recalculated values
     try {
-      const res = await API.patch(`/documents/${editDocId}/`, { parsed_json: newSections });
+      const res = await API.patch(`/documents/${editDocId}/`, { parsed_json: recalcedSections });
       const updated = res.data.parsed_json || [];
+      // Step 4: After backend responds, update state with backend’s "true" result
       setParsedSectionsMap((old) => ({ ...old, [editDocId]: updated }));
     } catch (error) {
       console.error(error);
-      // alert('Gagal mengupdate nilai sel.');
+      // (Optional) Could add a toast/error popup here and revert the UI if PATCH fails
     }
   }
 
@@ -873,35 +882,20 @@ function DocumentTable({ documents, refreshDocuments }) {
               </TableHead>
               <TableBody>
                 {dataRows.map((row, rowIndex) => {
-                  const itemDocs = (supportingDocs[docId] || []).filter(
-                    (sd) => sd.section_index === sectionIndex && sd.row_index === rowIndex
-                  );
+                  const itemDocs = (supportingDocs[docId] || [])
+  .filter((sd) => sd.section_index === sectionIndex && sd.row_index === rowIndex)
+  .sort((a, b) => a.supporting_doc_sequence - b.supporting_doc_sequence);
                   const expanded = !!itemDocsExpandedMap[`${docId}-${sectionIndex}-${rowIndex}`];
-                  const rowClickable = docStatus !== 'draft' && docStatus !== 'rejected';
+                  const role = localStorage.getItem('role');
+                  const docStatus = docObj.status;
+                  const canRowToggle = ['owner', 'higher-up', 'employee'].includes(role) && !['draft', 'rejected'].includes(docStatus);
 
                   return (
                     <React.Fragment key={rowIndex}>
                       <TableRow
-                        hover={rowClickable}
-                        onClick={
-                          rowClickable
-                            ? () => handleToggleItemDocs(docId, sectionIndex, rowIndex)
-                            : undefined
-                        }
-                        sx={{
-                          backgroundColor:
-                            rowIndex % 2 === 0
-                              ? isDark
-                                ? theme.palette.background.paper
-                                : 'white'
-                              : isDark
-                                ? theme.palette.background.default
-                                : '#fafafa',
-                          cursor: rowClickable ? 'pointer' : 'default',
-                          '&:hover': rowClickable
-                            ? { backgroundColor: isDark ? theme.palette.action.hover : 'rgba(25,118,210,0.08)' }
-                            : undefined,
-                        }}
+                        hover
+                        sx={{ cursor: canRowToggle ? 'pointer' : 'default' }}
+                        onClick={canRowToggle ? () => handleToggleItemDocs(docId, sectionIndex, rowIndex) : undefined}
                       >
                         {row.map((cell, cellIndex) => {
                           const isRefCodeColumn = headerRow[cellIndex]?.toUpperCase() === 'REF_CODE';
@@ -1051,6 +1045,40 @@ function DocumentTable({ documents, refreshDocuments }) {
         </Paper>
       );
     });
+  }
+
+  // Helper to turn '5.200.000' → 5200000 (supports empty/null)
+  function idrToInt(text) {
+    if (!text) return 0;
+    return parseInt(String(text).replace(/[^\d]/g, ''), 10) || 0;
+  }
+
+  // Helper to turn 5200000 → '5.200.000'
+  function intToIdr(num) {
+    return num.toLocaleString('id-ID');
+  }
+
+  // JS version of backend recalc_totals
+  function recalcTotals(parsed) {
+    let grand = 0;
+    parsed.forEach(sec => {
+      const tbl = sec.table || [];
+      if (!tbl.length) return;
+      const headers = tbl[0];
+      const idx = headers.indexOf('PENGIRIMAN');
+      if (idx === -1) return;
+      const subtotal = tbl.slice(1).reduce((acc, row) => acc + idrToInt(row[idx]), 0);
+      sec.subtotal = intToIdr(subtotal);
+      grand += subtotal;
+    });
+    // update or append grand_total object
+    const gt_str = intToIdr(grand);
+    if (parsed.length && parsed[parsed.length - 1].grand_total !== undefined) {
+      parsed[parsed.length - 1].grand_total = gt_str;
+    } else {
+      parsed.push({ grand_total: gt_str });
+    }
+    return parsed;
   }
 
   return (

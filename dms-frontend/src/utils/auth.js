@@ -1,5 +1,5 @@
 export function getToken() {
-  return localStorage.getItem('token');
+  return localStorage.getItem('accessToken');
 }
 
 export function isLoggedIn() {
@@ -7,6 +7,9 @@ export function isLoggedIn() {
 }
 
 export function logout() {
-  localStorage.clear();
+  localStorage.removeItem('accessToken');
+  localStorage.removeItem('refreshToken');
+  localStorage.removeItem('username');
+  localStorage.removeItem('role');
   window.location.href = '/login';
 }

@@ -32,7 +32,12 @@ function TagihanDetailPage() {
 
   useEffect(() => {
     API.get(`/documents/${id}/`).then((res) => setDocument(res.data));
-    API.get('/supporting-docs/', { params: { main_document: id } }).then((res) => setSupportingDocs(res.data));
+    API.get('/supporting-docs/', { params: { main_document: id } })
+      .then((res) =>
+        setSupportingDocs(
+          [...res.data].sort((a, b) => a.supporting_doc_sequence - b.supporting_doc_sequence)
+        )
+      );
   }, [id]);
 
   const handleFinishDraft = async () => {

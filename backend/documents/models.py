@@ -14,6 +14,8 @@ import string
 from django.db import models
 from django.core.exceptions import ValidationError
 from django.utils import timezone
+from documents.utils import recalc_totals
+from django.conf import settings
 
 # -----------------------------------------------------------------------------
 # Legacy stub (masih dipakai migration 0013_…)
@@ -143,6 +145,9 @@ class Document(models.Model):
     # ------------------------------------------------------------------
 
     def save(self, *args, **kwargs):
+        # Always recalc totals from raw values before saving
+        if self.parsed_json:
+            self.parsed_json = recalc_totals(self.parsed_json)
         if not self.document_code:
             self.document_code, self.sequence_no = self._generate_next_code()
         elif self.revision_no and not self.document_code.endswith(f"-R{self.revision_no}"):
@@ -192,6 +197,9 @@ class SupportingDocument(models.Model):
     # Hooks
     # -----------------------------
 
+    class Meta:
+        ordering = ["supporting_doc_sequence"]  # oldest first by default
+
     def save(self, *args, **kwargs):
         # Auto‑populate identifier once both parts are known
         if not self.identifier and self.item_ref_code and self.supporting_doc_sequence:
@@ -202,3 +210,20 @@ class SupportingDocument(models.Model):
         return self.identifier or (
             f"{self.main_document.document_code} – {os.path.basename(self.file.name)}"
         )
+
+
+# -----------------------------------------------------------------------------
+# Model: UserSettings
+# -----------------------------------------------------------------------------
+
+class UserSettings(models.Model):
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="settings",
+    )
+    # minutes; 0 == never auto-logout
+    idle_timeout = models.PositiveIntegerField(default=60)
+
+    def __str__(self):
+        return f"{self.user.username} settings"

@@ -1,8 +1,10 @@
 // File: src/App.js
 // ----------------
 
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import useIdleLogout from "./hooks/useIdleLogout";
+import API from "./services/api";
 
 // Layout
 import MainLayout from './layouts/MainLayout';
@@ -16,6 +18,18 @@ import CompanyDirectoryPage from './pages/CompanyDirectoryPage';
 import DocumentPreviewPage from './pages/DocumentPreviewPage';   // FIX: import halaman pratinjau
 
 function App() {
+  const [idleMinutes, setIdleMinutes] = useState(60); // default
+
+  useEffect(() => {
+    if (localStorage.getItem("accessToken")) {
+      API.get("/user-settings/").then(({ data }) =>
+        setIdleMinutes(data.idle_timeout)
+      );
+    }
+  }, []);
+
+  useIdleLogout(idleMinutes);
+
   return (
     <Router>
       <Routes>
