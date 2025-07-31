@@ -591,19 +591,24 @@ function DocumentTable({ documents, refreshDocuments }) {
       }
     }
   
-    // 2️⃣  Build human‑readable list of unapproved docs with item description
+    // 2️⃣  Build human‑readable list of unapproved docs with section, row, and numbering
     const unapproved = (sDocs || [])
       .filter((sd) => sd.status !== 'disetujui')
       .map((sd) => {
-        let desc = '(Unknown Item)';
+        let sectionName = 'Unknown';
+        let rowNo = '-';
+        let docNum = '';
         if (sd.section_index != null && sd.row_index != null) {
           const section = parsed[sd.section_index];
-          const row     = section?.table?.[sd.row_index + 1]; // +1 skip header row
-          if (Array.isArray(row) && row.length > 1 && row[1]) {
-            desc = row[1]; // "KETERANGAN" column
-          }
+          sectionName = section?.company || 'Unknown';
+          rowNo = sd.row_index + 1; // +1 to be human-readable
+          const docsForItem = (sDocs || []).filter(
+            x => x.section_index === sd.section_index && x.row_index === sd.row_index
+          ).sort((a, b) => a.supporting_doc_sequence - b.supporting_doc_sequence);
+          const index = docsForItem.findIndex(x => x.id === sd.id);
+          docNum = `Dokumen ${index + 1}/${docsForItem.length}`;
         }
-        return { ...sd, itemDescription: desc };
+        return { ...sd, itemDescription: `${sectionName} no. ${rowNo}: ${docNum}` };
       });
   
     // 3️⃣  Show dialog

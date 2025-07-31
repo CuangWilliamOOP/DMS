@@ -53,6 +53,13 @@ class DocumentViewSet(viewsets.ModelViewSet):
             doc.finished_draft_at = timezone.now()
 
         elif new_status == "disetujui":
+            # BLOCK approval if any supporting doc is not 'disetujui'
+            unapproved = doc.supporting_docs.exclude(status="disetujui")
+            if unapproved.exists():
+                return Response(
+                    {"detail": "Semua dokumen pendukung harus disetujui sebelum dokumen utama dapat disetujui."},
+                    status=drf_status.HTTP_400_BAD_REQUEST,
+                )
             doc.approved_at = timezone.now()
 
         elif new_status == "rejected":

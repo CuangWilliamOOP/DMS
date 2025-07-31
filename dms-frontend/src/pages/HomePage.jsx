@@ -45,6 +45,12 @@ function HomePage() {
       (d.status === 'belum_disetujui' || d.status === 'draft')
   ).length;
 
+  const unpaidCount = documents.filter(
+    (d) =>
+      !d.archived &&
+      d.status === 'disetujui'
+  ).length;
+
   // Background gradient (adapts to dark mode)
   const bgGradient =
     theme.palette.mode === "dark"
@@ -105,6 +111,7 @@ function HomePage() {
             tabValue={tabValue}
             onTabChange={handleTabChange}
             pendingCount={pendingCount}
+            unpaidCount={unpaidCount}
           />
         </Paper>
 
