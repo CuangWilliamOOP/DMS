@@ -14,6 +14,7 @@ import {
 import FolderOpenIcon from '@mui/icons-material/FolderOpen';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import DeleteIcon from '@mui/icons-material/Delete';
+import DescriptionOutlinedIcon from '@mui/icons-material/DescriptionOutlined';
 import { motion } from 'framer-motion';
 import { useParams, useNavigate, Link as RouterLink } from 'react-router-dom';
 import API from '../services/api';
@@ -231,35 +232,105 @@ function CompanyDirectoryPage() {
                       transition={{ delay: 0.04 * idx, duration: 0.36 }}
                     >
                       <Paper
-                        elevation={3}
+                        elevation={7}
                         sx={{
                           p: 3,
-                          borderRadius: 4,
+                          borderRadius: '22px',
+                          minHeight: 210,
                           textAlign: 'center',
                           cursor: 'pointer',
+                          background: '#fff',
+                          border: '1.5px solid #edf0fa',
+                          boxShadow: '0 10px 32px 0 #b6c9f344',
                           position: 'relative',
-                          background: isDark ? '#25294c' : '#fff',
-                          boxShadow: isDark
-                            ? '0 2px 14px #1b1d2a33'
-                            : '0 4px 18px #c7daff10',
-                          transition: 'transform 0.15s, box-shadow 0.13s',
+                          transition: 'box-shadow 0.18s, transform 0.17s',
                           '&:hover': {
-                            transform: 'translateY(-4px) scale(1.025)',
-                            boxShadow: isDark
-                              ? '0 10px 28px #25234633'
-                              : '0 8px 36px #e3ecff16',
+                            boxShadow: '0 18px 48px 0 #b6c9f355',
+                            transform: 'translateY(-3px) scale(1.018)',
                           },
+                          display: 'flex',
+                          flexDirection: 'column',
+                          alignItems: 'center',
+                          justifyContent: 'center',
                         }}
                         onClick={() =>
                           navigate(`/directory/${companyName}/${selectedDir.key}/preview/${doc.document_code}`)
                         }
                       >
-                        <Typography variant="h6" fontWeight={700} sx={{ letterSpacing: 0.6 }}>
+                        <Box
+                          sx={{
+                            mb: 2,
+                            width: 54,
+                            height: 66,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            position: 'relative',
+                          }}
+                        >
+                          {/* Paper icon with a fake folded corner effect */}
+                          <Box
+                            sx={{
+                              position: 'absolute',
+                              width: 54,
+                              height: 66,
+                              borderRadius: '8px 16px 12px 12px',
+                              background: '#f8fafc',
+                              border: '1.2px solid #e3e6f3',
+                              zIndex: 1,
+                            }}
+                          />
+                          <DescriptionOutlinedIcon
+                            sx={{
+                              fontSize: 44,
+                              color: '#7e9be6',
+                              zIndex: 2,
+                              position: 'relative',
+                            }}
+                          />
+                          {/* Optional: Fake folded corner using a small triangle div */}
+                          <Box
+                            sx={{
+                              position: 'absolute',
+                              right: 4,
+                              top: 3,
+                              width: 18,
+                              height: 18,
+                              background: 'linear-gradient(135deg,#f2f3fa 60%,#e3e7fc 100%)',
+                              borderTopRightRadius: '6px',
+                              clipPath: 'polygon(100% 0,0 100%,100% 100%)',
+                              border: '1.5px solid #dde1f3',
+                              borderLeft: 'none',
+                              borderBottom: 'none',
+                              zIndex: 3,
+                            }}
+                          />
+                        </Box>
+                        <Typography
+                          variant="h6"
+                          fontWeight={700}
+                          sx={{ letterSpacing: 0.7, mb: 0.8, color: '#232849' }}
+                        >
                           #{doc.document_code}
                         </Typography>
                         <Typography variant="body2" sx={{ mb: 2, color: 'text.secondary' }}>
                           {new Date(doc.created_at).toLocaleDateString('id-ID')}
                         </Typography>
+                        <Box
+                          sx={{
+                            px: 2,
+                            py: 1,
+                            background: '#f5f8ff',
+                            borderRadius: 2.7,
+                            fontWeight: 700,
+                            fontSize: 15,
+                            color: '#3688d6',
+                            mt: 1,
+                            boxShadow: '0 1px 4px #b3cfff10',
+                          }}
+                        >
+                          Sudah Dibayar
+                        </Box>
                         {/* Show delete only for owner */}
                         {localStorage.getItem('role') === 'owner' && (
                           <IconButton
@@ -269,21 +340,6 @@ function CompanyDirectoryPage() {
                             <DeleteIcon />
                           </IconButton>
                         )}
-                        <Box
-                          sx={{
-                            mt: 2,
-                            px: 2,
-                            py: 1,
-                            background: isDark ? '#31365c' : '#f2f7ff',
-                            borderRadius: 2,
-                            fontWeight: 600,
-                            fontSize: 15,
-                            color: isDark ? '#90caf9' : '#1976d2',
-                            boxShadow: '0 1px 4px #b3cfff09',
-                          }}
-                        >
-                          Sudah Dibayar
-                        </Box>
                       </Paper>
                     </motion.div>
                   </Grid>

@@ -25,6 +25,11 @@ import KeyboardArrowUpIcon from '@mui/icons-material/KeyboardArrowUp';
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
 import AddIcon from '@mui/icons-material/Add';
 import HelpIcon from '@mui/icons-material/Help';
+import EditNoteOutlinedIcon from '@mui/icons-material/EditNoteOutlined';
+import PendingActionsOutlinedIcon from '@mui/icons-material/PendingActionsOutlined';
+import TaskAltOutlinedIcon from '@mui/icons-material/TaskAltOutlined';
+import HighlightOffOutlinedIcon from '@mui/icons-material/HighlightOffOutlined';
+import PaidOutlinedIcon from '@mui/icons-material/PaidOutlined';
 import { Tooltip } from '@mui/material';
 import API from '../services/api';
 import {
@@ -1081,6 +1086,53 @@ function DocumentTable({ documents, refreshDocuments }) {
     return parsed;
   }
 
+  function statusProps(status) {
+    switch (status) {
+      case "draft":
+        return {
+          icon: <EditNoteOutlinedIcon sx={{ color: "#7986a1", fontSize: 22, mr: 1 }} />,
+          label: "Dalam Draf",
+          color: "#90a4ae",
+          bgcolor: "rgba(120,140,170,0.11)"
+        };
+      case "belum_disetujui":
+        return {
+          icon: <PendingActionsOutlinedIcon sx={{ color: "#fbc02d", fontSize: 22, mr: 1 }} />,
+          label: "Belum Disetujui",
+          color: "#b28900",
+          bgcolor: "rgba(255, 193, 7, 0.12)"
+        };
+      case "disetujui":
+        return {
+          icon: <TaskAltOutlinedIcon sx={{ color: "#43a047", fontSize: 22, mr: 1 }} />,
+          label: "Disetujui",
+          color: "#388e3c",
+          bgcolor: "rgba(76, 175, 80, 0.11)"
+        };
+      case "rejected":
+        return {
+          icon: <HighlightOffOutlinedIcon sx={{ color: "#e53935", fontSize: 22, mr: 1 }} />,
+          label: "Ditolak",
+          color: "#e53935",
+          bgcolor: "rgba(229, 57, 53, 0.11)"
+        };
+      case "sudah_dibayar":
+        return {
+          icon: <PaidOutlinedIcon sx={{ color: "#1976d2", fontSize: 22, mr: 1 }} />,
+          label: "Sudah Dibayar",
+          color: "#1976d2",
+          bgcolor: "rgba(33, 150, 243, 0.09)"
+        };
+      default:
+        return {
+          icon: <EditNoteOutlinedIcon sx={{ color: "#b0b0b0", fontSize: 22, mr: 1 }} />,
+          label: status,
+          color: "#aaa",
+          bgcolor: "rgba(160,160,160,0.09)"
+        };
+    }
+  }
+
   return (
     <>
       <TableContainer component={Paper} sx={{ mb: 2 }}>
@@ -1129,38 +1181,29 @@ function DocumentTable({ documents, refreshDocuments }) {
                     <TableCell>{formatDocType(doc.doc_type)}</TableCell>
                     <TableCell>{formatIndoDateTime(doc.created_at)}</TableCell>
                     <TableCell>
-                      <Box
-                        sx={{
-                          display: 'inline-block',
-                          px: 1.5,
-                          py: 0.5,
-                          borderRadius: '12px',
-                          bgcolor:
-                            doc.status === 'disetujui'
-                              ? 'success.main'
-                              : doc.status === 'belum_disetujui'
-                              ? 'warning.main'
-                              : doc.status === 'rejected'
-                              ? 'error.main'
-                              : doc.status === 'sudah_dibayar'
-                              ? 'primary.main'
-                              : 'grey.500',
-                          color: 'white',
-                          fontWeight: 'bold',
-                          fontSize: '0.75rem',
-                          textAlign: 'center',
-                        }}
-                      >
-                        {doc.status === 'disetujui'
-                          ? 'Disetujui'
-                          : doc.status === 'belum_disetujui'
-                          ? 'Belum Disetujui'
-                          : doc.status === 'rejected'
-                          ? 'Ditolak'
-                          : doc.status === 'sudah_dibayar'
-                          ? 'Sudah Dibayar'
-                          : 'Dalam Draf'}
-                      </Box>
+                      {(() => {
+                        const { icon, label, color, bgcolor } = statusProps(doc.status);
+                        return (
+                          <Box
+                            sx={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              px: 1.5,
+                              py: 0.6,
+                              borderRadius: '16px',
+                              bgcolor,
+                              color,
+                              fontWeight: 700,
+                              fontSize: '0.92rem',
+                              letterSpacing: 0.2,
+                              boxShadow: '0 1px 4px #c7d6e018',
+                            }}
+                          >
+                            {icon}
+                            {label}
+                          </Box>
+                        );
+                      })()}
                     </TableCell>
                     {/* Tombol hapus hanya untuk owner */}
                     {userRole === 'owner' && (
