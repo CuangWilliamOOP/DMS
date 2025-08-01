@@ -160,8 +160,11 @@ class SupportingDocumentViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         qs = SupportingDocument.objects.all().order_by("supporting_doc_sequence")
         main_id = self.request.query_params.get("main_document")
+        doc_type = self.request.query_params.get("doc_type")
         if main_id:
             qs = qs.filter(main_document_id=main_id)
+        if doc_type:
+            qs = qs.filter(doc_type=doc_type)
         return qs
 
     def perform_create(self, serializer):
@@ -172,6 +175,19 @@ class SupportingDocumentViewSet(viewsets.ModelViewSet):
                 status=drf_status.HTTP_400_BAD_REQUEST,
             )
         main_doc = serializer.validated_data["main_document"]
+
+        # Enforce only one proof_of_payment per item
+        if serializer.validated_data.get("doc_type") == "proof_of_payment":
+            existing = SupportingDocument.objects.filter(
+                main_document=main_doc,
+                item_ref_code=item_ref_code,
+                doc_type="proof_of_payment",
+            )
+            if existing.exists():
+                return Response(
+                    {"detail": "Sudah ada bukti pembayaran untuk item ini."},
+                    status=drf_status.HTTP_400_BAD_REQUEST,
+                )
 
         latest = (
             SupportingDocument.objects.filter(

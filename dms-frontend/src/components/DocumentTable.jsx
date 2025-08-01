@@ -633,6 +633,31 @@ function DocumentTable({ documents, refreshDocuments }) {
     }
   }
 
+  /* ——— helper to turn a clipboard item into a File object ——— */
+  function fileFromClipboardItem(item) {
+    if (!item || item.kind !== "file" || !item.type.startsWith("image/")) return null;
+    const original = item.getAsFile();
+    if (!original) return null;
+    const rand = Math.random().toString(36).slice(2, 7);          // 5-char id
+    const ext  = original.type.split("/")[1] || "png";
+    return new File([original], `image_${rand}.${ext}`, { type: original.type });
+  }
+
+  /* ——— paste ⇒ push into attachDocFiles ——— */
+  const handlePaste = useCallback((e) => {
+    const { items } = e.clipboardData || {};
+    if (!items?.length) return;
+    const pasted = [];
+    for (const it of items) {
+      const f = fileFromClipboardItem(it);
+      if (f) pasted.push(f);
+    }
+    if (pasted.length) {
+      setAttachDocFiles((prev) => [...prev, ...pasted]);
+      e.preventDefault();                              // stop the browser’s default paste
+    }
+  }, []);
+
   // Helpers for formatting
   function formatIndoDateTime(dateString) {
     if (!dateString) return '';
@@ -781,7 +806,7 @@ function DocumentTable({ documents, refreshDocuments }) {
         )}
 
         {/* Tombol Tambah Referensi Pembayaran */}
-        {userRole === 'higher-up' && docStatus === 'disetujui' && (
+        {userRole === 'employee' && docStatus === 'disetujui' && (
           <Box sx={{ display:'flex', justifyContent:'flex-end', mt:3 }}>
             <Button
               variant="contained"
@@ -967,6 +992,9 @@ function DocumentTable({ documents, refreshDocuments }) {
                             <Box sx={{ m: 2 }}>
                               {/* NEW header — shows current position + total */}
                               <ItemDocsPreview
+                                key={row.id}
+                                itemRefCode={row[row.length - 1]} // assuming last cell is item_ref_code (REF_CODE)
+                                mainDocumentId={docId}
                                 itemDocs={itemDocs}
                                 userRole={userRole}
                                 mainDocStatus={docStatus}
@@ -982,7 +1010,7 @@ function DocumentTable({ documents, refreshDocuments }) {
                                   });
                                 }}
                               />
-                              {userRole === 'higher-up' && docStatus === 'disetujui' && (
+                              {userRole === 'employee' && docStatus === 'disetujui' && (
                                 <Box sx={{ mt: 2, textAlign: 'right' }}>
                                   {(() => {
                                     const payIdx = headerRow.indexOf('PAY_REF');
@@ -1319,6 +1347,7 @@ function DocumentTable({ documents, refreshDocuments }) {
         getInputProps={getInputProps}
         isDragActive={isDragActive}
         files={attachDocFiles}
+        onPaste={handlePaste}        /* 👈  new */
         onSubmit={handleAttachDocSubmit}
       />
       <AddSectionDialog

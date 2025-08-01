@@ -26,6 +26,20 @@ import { motion } from 'framer-motion';
 
 const slideUp = (props) => <Slide {...props} direction="up" />;
 
+function fileFromClipboardItem(item) {
+  if (!item || item.kind !== "file" || !item.type.startsWith("image/")) return null;
+
+  const original = item.getAsFile();
+  if (!original) return null;
+
+  // ⇢ build "image_<5randomchars>.<ext>"
+  const rand = Math.random().toString(36).slice(2, 7);      // 5 alphanum chars
+  const ext  = original.type.split("/")[1] || "png";
+  const name = `image_${rand}.${ext}`;
+
+  return new File([original], name, { type: original.type });
+}
+
 function AddDocumentForm() {
   const theme = useTheme();
   const isDark = theme.palette.mode === 'dark';
@@ -123,6 +137,30 @@ function AddDocumentForm() {
     }
   };
 
+  const dropRef = React.useRef(null);
+
+  const handlePaste = React.useCallback((e) => {
+    const { items } = e.clipboardData || {};
+    if (!items?.length) return;
+
+    for (const it of items) {
+      const pastedFile = fileFromClipboardItem(it);
+      if (pastedFile) {
+        setFile(pastedFile);
+        setPreviewUrl(URL.createObjectURL(pastedFile));
+        e.preventDefault();
+        break;
+      }
+    }
+  }, []);
+
+  React.useEffect(() => {
+    const node = dropRef.current;
+    if (!node) return;
+    node.addEventListener("paste", handlePaste);
+    return () => node.removeEventListener("paste", handlePaste);
+  }, [handlePaste]);
+
   return (
     <>
       <motion.div
@@ -142,6 +180,8 @@ function AddDocumentForm() {
           {/* Dropzone for file upload */}
           <Box
             {...getRootProps()}
+            ref={dropRef}          // 👈 add this
+            onPaste={handlePaste}  // 👈 optional fallback (works in most browsers)
             sx={{
               flex: 1,
               height: 420,
@@ -196,9 +236,37 @@ function AddDocumentForm() {
               </motion.div>
             )}
             {!file && (
-              <Typography variant="h6" color="textSecondary" sx={{ mt: 2 }}>
-                {isDragActive ? 'Lepaskan file di sini!' : 'Seret file ke sini atau klik untuk unggah'}
-              </Typography>
+              <Box sx={{
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                justifyContent: "center",
+                width: "100%",
+                mt: 2,
+              }}>
+                <Typography
+                  variant="h6"
+                  color="textSecondary"
+                  sx={{
+                    fontWeight: 500,
+                    letterSpacing: 0.15,
+                    textAlign: "center",
+                    mb: 0.5,
+                    width: "100%",
+                  }}
+                >
+                  {isDragActive
+                    ? 'Lepaskan file di sini!'
+                    : 'Seret file, klik, atau Ctrl+V untuk tempel gambar'}
+                </Typography>
+                <Typography
+                  variant="body2"
+                  color="text.secondary"
+                  sx={{ textAlign: "center", opacity: 0.72 }}
+                >
+                  Format: PDF, JPG, PNG, Word, Excel
+                </Typography>
+              </Box>
             )}
           </Box>
 

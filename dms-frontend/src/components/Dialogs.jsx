@@ -36,38 +36,89 @@ export const DeleteSupportingDocumentDialog = ({ open, onClose, onConfirm }) => 
 );
 
 // Dialog Tambah Dokumen Pendukung
-export const AttachSupportingDocumentDialog = ({ open, onClose, company, sectionIndex, rowIndex, getRootProps, getInputProps, isDragActive, files, onSubmit }) => (
-  <Dialog open={open} onClose={onClose} fullWidth>
-    <DialogTitle>Tambah Dokumen Pendukung</DialogTitle>
-    <DialogContent>
-      <DialogContentText>
-        Perusahaan: <strong>{company}</strong>, section <strong>{sectionIndex}</strong>, baris <strong>{rowIndex}</strong>
-      </DialogContentText>
-      <Box
-        {...getRootProps()}
-        sx={{
-          mt: 2, p: 2, border: '3px dashed #90caf9', borderRadius: 2, textAlign: 'center',
-          bgcolor: isDragActive ? '#e3f2fd' : '#fafafa', cursor: 'pointer'
-        }}
-      >
-        <input {...getInputProps()} />
-        {isDragActive ? 'Lepaskan file di sini...' : 'Seret & lepaskan file di sini, atau klik'}
-      </Box>
-      {files.length > 0 && (
-        <Box sx={{ mt: 2 }}>
-          <Typography variant="subtitle2">File yang akan diunggah:</Typography>
-          {files.map((f, idx) => (
-            <Typography key={idx} variant="body2">- {f.name}</Typography>
-          ))}
+export const AttachSupportingDocumentDialog = ({
+  open, onClose, company, sectionIndex, rowIndex,
+  getRootProps, getInputProps, isDragActive, files, onSubmit,
+  onPaste
+}) => {
+  const theme = useTheme();
+  const isDark = theme.palette.mode === 'dark';
+
+  return (
+    <Dialog open={open} onClose={onClose} fullWidth>
+      <DialogTitle sx={{
+        background: isDark ? 'linear-gradient(87deg, #283593 0%, #512da8 100%)' : 'linear-gradient(87deg, #1976d2 0%, #7e57c2 100%)',
+        color: '#fff',
+        borderTopLeftRadius: 16,
+        borderTopRightRadius: 16,
+        mb: 1,
+        fontWeight: 700,
+        fontSize: 18
+      }}>
+        Tambah Dokumen Pendukung
+      </DialogTitle>
+      <DialogContent sx={{
+        background: isDark ? '#181a29' : '#fff',
+        color: isDark ? '#e3e8ff' : undefined,
+        borderBottomLeftRadius: 16,
+        borderBottomRightRadius: 16
+      }}>
+        <DialogContentText sx={{ color: isDark ? '#bfc8e6' : undefined }}>
+          Perusahaan: <strong>{company}</strong>, section <strong>{sectionIndex}</strong>, baris <strong>{rowIndex}</strong>
+        </DialogContentText>
+        <Box
+          {...getRootProps()}
+          onPaste={onPaste}
+          sx={{
+            mt: 2, p: 2, border: '3px dashed #90caf9', borderRadius: 2, textAlign: 'center',
+            bgcolor: isDragActive ? (isDark ? '#23263a' : '#e3f2fd') : (isDark ? '#23263a' : '#fafafa'),
+            cursor: 'pointer',
+            color: isDark ? '#e3e8ff' : undefined
+          }}
+        >
+          <input {...getInputProps()} />
+          {isDragActive
+            ? 'Lepaskan file di sini...'
+            : 'Seret / klik / atau Ctrl-V untuk tempel gambar'}
         </Box>
-      )}
-    </DialogContent>
-    <DialogActions>
-      <Button onClick={onClose} color="inherit">Batal</Button>
-      <Button onClick={onSubmit} variant="contained" disabled={!files.length}>Unggah</Button>
-    </DialogActions>
-  </Dialog>
-);
+        {files.length > 0 && (
+          <Box sx={{ mt: 2 }}>
+            <Typography variant="subtitle2" sx={{ color: isDark ? '#bfc8e6' : undefined }}>File yang akan diunggah:</Typography>
+            {files.map((f, idx) => (
+              <Typography key={idx} variant="body2" sx={{ color: isDark ? '#e3e8ff' : undefined }}>- {f.name}</Typography>
+            ))}
+          </Box>
+        )}
+      </DialogContent>
+      <DialogActions sx={{
+        background: isDark ? '#181a29' : '#fff',
+        borderBottomLeftRadius: 16,
+        borderBottomRightRadius: 16,
+        px: 3, pb: 2
+      }}>
+        <Button onClick={onClose} color="inherit" sx={{ borderRadius: 2, fontWeight: 600 }}>
+          Batal
+        </Button>
+        <Button onClick={onSubmit} variant="contained" disabled={!files.length}
+          sx={{
+            borderRadius: 2,
+            fontWeight: 600,
+            background: isDark ? 'linear-gradient(90deg, #1976d2, #7e57c2)' : 'linear-gradient(90deg, #1976d2, #7e57c2)',
+            color: '#fff',
+            boxShadow: '0 3px 12px rgba(25,118,210,0.09)',
+            '&:hover': {
+              background: isDark
+                ? 'linear-gradient(90deg, #1565c0, #512da8)'
+                : 'linear-gradient(90deg, #1565c0, #7e57c2)'
+            }
+          }}
+        >
+          Unggah
+        </Button>
+      </DialogActions>
+    </Dialog>
+  );
+};
 
 // Dialog Tambah Section Baru
 export const AddSectionDialog = ({ open, onClose, name, setName, subtotal, setSubtotal, onConfirm }) => (
