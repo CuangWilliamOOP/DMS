@@ -213,6 +213,40 @@ class SupportingDocument(models.Model):
 
 
 # -----------------------------------------------------------------------------
+# Model: PaymentProof
+# -----------------------------------------------------------------------------
+
+class PaymentProof(models.Model):
+    main_document = models.ForeignKey(
+        Document,
+        on_delete=models.CASCADE,
+        related_name="payment_proofs"
+    )
+    section_index = models.PositiveIntegerField()
+    item_index = models.PositiveIntegerField()
+
+    identifier = models.CharField(max_length=50, unique=True, editable=False)
+
+    file = models.FileField(
+        upload_to="uploads/payment_proofs/",
+        validators=[validate_file_extension],
+    )
+
+    uploaded_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ('main_document', 'section_index', 'item_index')
+
+    def save(self, *args, **kwargs):
+        if not self.identifier:
+            self.identifier = f"{self.main_document.document_code}S{self.section_index + 1}I{self.item_index + 1}"
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return self.identifier
+
+
+# -----------------------------------------------------------------------------
 # Model: UserSettings
 # -----------------------------------------------------------------------------
 

@@ -6,9 +6,10 @@ from documents.views import (
     DocumentViewSet,
     SupportingDocumentViewSet,
     parse_and_store_view,
-    login_view,  # <-- add this import
-    user_info,   # <-- import user_info
+    login_view,
+    user_info,
     UserSettingsView,
+    PaymentProofViewSet,  # <-- add this import
 )
 from django.conf import settings
 from django.conf.urls.static import static
@@ -20,6 +21,7 @@ from rest_framework_simplejwt.views import (
 router = routers.DefaultRouter()
 router.register(r'documents', DocumentViewSet, basename='document')
 router.register(r'supporting-docs', SupportingDocumentViewSet, basename='supporting-doc')
+router.register(r'payment-proofs', PaymentProofViewSet, basename='payment-proof')  # <-- add this line
 
 urlpatterns = [
     path('admin/', admin.site.urls),

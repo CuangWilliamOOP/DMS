@@ -1,9 +1,3 @@
-// fix(src/components/DocumentTableParts.jsx): remove UI "APPROVED" stamp overlay
-// • Deleted <ApprovedStamp/> component
-// • Deleted its conditional render inside renderFilePreview()
-// 
-// NOTE: purely visual stamp now handled by backend‑embedded watermark, so no UI overlay needed.
-
 import React, { useState, useEffect } from 'react';
 import {
   Dialog,
@@ -24,6 +18,7 @@ import ArrowForwardIosIcon from '@mui/icons-material/ArrowForwardIos';
 import { canEvaluateSupportingDoc, canDeleteSupportingDoc } from '../utils/rolePermissions';
 import Zoom from 'react-medium-image-zoom';
 import 'react-medium-image-zoom/dist/styles.css';
+import PaymentProofTab from './PaymentProofTab';
 
 /** Dialog untuk Approve Dokumen Pendukung */
 export function SupportingDocApproval({ open, onClose, doc, afterApprove }) {
@@ -72,10 +67,14 @@ export function SupportingDocApproval({ open, onClose, doc, afterApprove }) {
 /** Komponen carousel untuk menampilkan dokumen pendukung (gambar, PDF, Excel, dsb). */
 export function ItemDocsPreview({
   itemDocs: initialItemDocs,
+  mainDocumentId,
   userRole,
   mainDocStatus,
+  sectionIndex,
+  itemIndex,
   handleDeleteSupportingClick,
   onDocApproved,
+  onProofChanged,        // 👈 add
 }) {
   // Helper: always sort by supporting_doc_sequence
   const sortBySeq = (arr = []) =>
@@ -86,6 +85,7 @@ export function ItemDocsPreview({
   const [activeIdx, setActiveIdx] = useState(0); // track which doc is showing
   const [approvalDialogOpen, setApprovalDialogOpen] = useState(false);
   const [docToApprove, setDocToApprove] = useState(null);
+  const [activeTab, setActiveTab] = useState('supportingDocs');
   const prevDocsLength = React.useRef(0);
 
   // sinkronisasi prop → state, always sorted
@@ -168,40 +168,121 @@ export function ItemDocsPreview({
 
   return (
     <Box sx={{ mt: 1, border: '1px solid #eee', p: 2, borderRadius: 2 }}>
-      <Typography variant="subtitle2" fontWeight="bold" sx={{ mb: 1 }}>
-        Dokumen {activeIdx + 1}/{docs.length} &nbsp;•&nbsp;Total: {docs.length}
-      </Typography>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 2 }}>
-        <IconButton size="small" onClick={handlePrev} disabled={currentIndex === 0}>
-          <ArrowBackIosNewIcon fontSize="small" />
-        </IconButton>
-        <IconButton size="small" onClick={handleNext} disabled={currentIndex === docs.length - 1}>
-          <ArrowForwardIosIcon fontSize="small" />
-        </IconButton>
-      </Box>
-
-      {renderFilePreview(currentDoc.file)}
-
-      {/* Aksi Approve / Delete */}
-      <Box sx={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', mt: 2, gap: 2 }}>
-        {canEvaluateSupportingDoc(userRole, currentDoc.status, mainDocStatus) && (
-          <Button variant="contained" size="small" color="success" onClick={() => handleOpenApproveDialog(currentDoc)}>
-            Setujui
+      {/* ───── TAB BUTTONS – only show after main doc is approved ───── */}
+      {mainDocStatus === 'disetujui' && (
+        <Box
+          sx={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            width: '100%',
+            my: 2,
+            px: 1,
+          }}
+        >
+          <Button
+            disableElevation
+            variant="text"
+            onClick={() => setActiveTab('supportingDocs')}
+            sx={{
+              flex: 1,
+              fontWeight: 500,
+              fontSize: "0.85rem",    // Smaller font
+              color: activeTab === 'supportingDocs' ? 'primary.main' : 'text.secondary',
+              borderBottom: activeTab === 'supportingDocs' ? '2.2px solid' : '2.2px solid transparent',
+              borderRadius: 0,
+              mx: 1,
+              py: 1,
+              minWidth: 0,
+              letterSpacing: 0,
+              transition: 'color 0.14s, border-bottom 0.14s',
+              background: 'none',
+            }}
+          >
+            Dokumen Pendukung
           </Button>
-        )}
-        {canDeleteSupportingDoc(userRole, mainDocStatus) && (
-          <IconButton color="error" onClick={() => handleDeleteSupportingClick(currentDoc)}>
-            <DeleteIcon />
-          </IconButton>
-        )}
-      </Box>
+          <Button
+            disableElevation
+            variant="text"
+            onClick={() => setActiveTab('paymentProof')}
+            sx={{
+              flex: 1,
+              fontWeight: 500,
+              fontSize: "0.85rem",    // Smaller font
+              color: activeTab === 'paymentProof' ? 'primary.main' : 'text.secondary',
+              borderBottom: activeTab === 'paymentProof' ? '2.2px solid' : '2.2px solid transparent',
+              borderRadius: 0,
+              mx: 1,
+              py: 1,
+              minWidth: 0,
+              letterSpacing: 0,
+              transition: 'color 0.14s, border-bottom 0.14s',
+              background: 'none',
+            }}
+          >
+            Bukti Pembayaran
+          </Button>
+        </Box>
+      )}
 
-      <SupportingDocApproval
-        open={approvalDialogOpen}
-        onClose={handleCloseApproveDialog}
-        doc={docToApprove}
-        afterApprove={refreshDocsAfterApprove}
-      />
+
+
+      {/* SINGLE conditional block – NO DUPLICATES */}
+      {(mainDocStatus !== 'disetujui' || activeTab === 'supportingDocs') ? (
+        <>
+          <Typography variant="subtitle2" fontWeight="bold" sx={{ mb: 1 }}>
+            Dokumen {activeIdx + 1}/{docs.length}  •  Total: {docs.length}
+          </Typography>
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 2 }}>
+            <IconButton size="small" onClick={handlePrev} disabled={currentIndex === 0}>
+              <ArrowBackIosNewIcon fontSize="small" />
+            </IconButton>
+            <IconButton
+              size="small"
+              onClick={handleNext}
+              disabled={currentIndex === docs.length - 1}
+            >
+              <ArrowForwardIosIcon fontSize="small" />
+            </IconButton>
+          </Box>
+
+          {renderFilePreview(currentDoc.file)}
+
+          {/* actions */}
+          <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 2, mt: 2 }}>
+            {canEvaluateSupportingDoc(userRole, currentDoc.status, mainDocStatus) && (
+              <Button
+                variant="contained"
+                size="small"
+                color="success"
+                onClick={() => handleOpenApproveDialog(currentDoc)}
+              >
+                Setujui
+              </Button>
+            )}
+            {canDeleteSupportingDoc(userRole, mainDocStatus) && (
+              <IconButton color="error" onClick={() => handleDeleteSupportingClick(currentDoc)}>
+                <DeleteIcon />
+              </IconButton>
+            )}
+          </Box>
+
+          <SupportingDocApproval
+            open={approvalDialogOpen}
+            onClose={handleCloseApproveDialog}
+            doc={docToApprove}
+            afterApprove={refreshDocsAfterApprove}
+          />
+        </>
+      ) : (
+        <PaymentProofTab
+          document={{ id: mainDocumentId }}
+          sectionIndex={sectionIndex}
+          itemIndex={itemIndex}
+          onProofChanged={onProofChanged}   /* 👈 forward it */
+        />
+      )}
+
     </Box>
   );
 }

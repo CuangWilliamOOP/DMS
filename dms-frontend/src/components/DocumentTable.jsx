@@ -91,6 +91,18 @@ function DocumentTable({ documents, refreshDocuments }) {
   // 🔝 state hooks (near other dialog states)
   const [payDoneDoc,     setPayDoneDoc]     = useState(null);
 
+  // Add paymentProofs state
+  const [paymentProofs, setPaymentProofs] = useState({});
+
+  // 1️⃣  Keep parent cache in sync when a supporting-doc changes
+  const handleSupportingDocUpdated = (updated) =>
+    setSupportingDocs((prev) => {
+      const mainId = updated.main_document;
+      const list   = (prev[mainId] || []).map((d) =>
+        d.id === updated.id ? updated : d
+      );
+      return { ...prev, [mainId]: list };
+    });
 
   const userRole = localStorage.getItem('role');
   const expandDocTypes = [
@@ -174,14 +186,11 @@ function DocumentTable({ documents, refreshDocuments }) {
     }
   }
   
-  
   function toggleRow(docId, docType) {
     if (!expandDocTypes.includes(docType)) return;
-  
+
     if (expandedRows.includes(docId)) {
       setExpandedRows((prev) => prev.filter((id) => id !== docId));
-      
-      // Tambahan penting di sini
       setItemDocsExpandedMap((prev) => {
         const newState = { ...prev };
         Object.keys(newState).forEach((key) => {
@@ -191,7 +200,6 @@ function DocumentTable({ documents, refreshDocuments }) {
         });
         return newState;
       });
-  
     } else {
       if (!supportingDocs[docId]) {
         API.get('/supporting-docs/', { params: { main_document: docId } })
@@ -203,6 +211,12 @@ function DocumentTable({ documents, refreshDocuments }) {
           .then((res) =>
             setParsedSectionsMap((old) => ({ ...old, [docId]: res.data.parsed_json || [] }))
           )
+          .catch(console.error);
+      }
+      // --- fetch payment proofs if needed ---
+      if (!paymentProofs[docId]) {
+        API.get('/payment-proofs/', { params: { main_document: docId } })
+          .then((res) => setPaymentProofs((old) => ({ ...old, [docId]: res.data })))
           .catch(console.error);
       }
       setExpandedRows((prev) => [...prev, docId]);
@@ -358,6 +372,22 @@ function DocumentTable({ documents, refreshDocuments }) {
       console.error(error);
       // (Optional) Could add a toast/error popup here and revert the UI if PATCH fails
     }
+  }
+
+  function hasMissingPaymentProof(docId, parsedSections) {
+    const proofs = paymentProofs[docId] || [];
+    if (!parsedSections || !Array.isArray(parsedSections)) return true;
+    for (let s = 0; s < parsedSections.length; ++s) {
+      const section = parsedSections[s];
+      if (!section.table || section.hasOwnProperty('grand_total')) continue;
+      for (let r = 0; r < section.table.length - 1; ++r) {
+        const found = proofs.some(
+          (pf) => pf.section_index === s && pf.item_index === r
+        );
+        if (!found) return true;
+      }
+    }
+    return false;
   }
 
   async function handleUpdateSubtotal(sectionIndex, newVal) {
@@ -658,6 +688,14 @@ function DocumentTable({ documents, refreshDocuments }) {
     }
   }, []);
 
+  // helper: reload proofs for one document ID
+  const refreshPaymentProofs = (docId) =>
+    API.get('/payment-proofs/', { params: { main_document: docId } })
+      .then((res) =>
+        setPaymentProofs((old) => ({ ...old, [docId]: res.data }))
+      )
+      .catch(console.error);
+
   // Helpers for formatting
   function formatIndoDateTime(dateString) {
     if (!dateString) return '';
@@ -811,7 +849,10 @@ function DocumentTable({ documents, refreshDocuments }) {
             <Button
               variant="contained"
               color="success"
-              disabled={docStatus !== 'disetujui' || hasMissingPayRef(docObj.id)}
+              disabled={
+                docStatus !== 'disetujui' ||
+                hasMissingPaymentProof(docObj.id, parsedSectionsMap[docObj.id])
+              }
               onClick={() => { setPayDoneDoc(docObj); setPayDoneDlgOpen(true); }}
             >
               Selesaikan Pembayaran
@@ -992,47 +1033,20 @@ function DocumentTable({ documents, refreshDocuments }) {
                             <Box sx={{ m: 2 }}>
                               {/* NEW header — shows current position + total */}
                               <ItemDocsPreview
-                                key={row.id}
-                                itemRefCode={row[row.length - 1]} // assuming last cell is item_ref_code (REF_CODE)
-                                mainDocumentId={docId}
+                                key={`${docId}-${sectionIndex}-${rowIndex}`}
                                 itemDocs={itemDocs}
+                                mainDocumentId={docId}
                                 userRole={userRole}
                                 mainDocStatus={docStatus}
                                 handleDeleteSupportingClick={handleDeleteSupportingClick}
-                                onDocApproved={(updatedDoc) => {
-                                  const mainDocId = updatedDoc.main_document;
-                                  setSupportingDocs((old) => {
-                                    const arr = old[mainDocId] || [];
-                                    const newArr = arr.map((od) =>
-                                      od.id === updatedDoc.id ? updatedDoc : od
-                                    );
-                                    return { ...old, [mainDocId]: newArr };
-                                  });
-                                }}
+                                sectionIndex={sectionIndex}
+                                itemIndex={rowIndex}
+                                onDocApproved={handleSupportingDocUpdated}
+                                onProofChanged={refreshPaymentProofs}   /* 👈 new prop */
                               />
                               {userRole === 'employee' && docStatus === 'disetujui' && (
                                 <Box sx={{ mt: 2, textAlign: 'right' }}>
-                                  {(() => {
-                                    const payIdx = headerRow.indexOf('PAY_REF');
-                                    const payVal =
-                                      payIdx !== -1 && row.length > payIdx ? (row[payIdx] || '').trim() : '';
-                                    return payVal ? (
-                                      <Typography variant="body2">
-                                        <strong>PAY_REF:</strong> {payVal}
-                                      </Typography>
-                                    ) : (
-                                      <Button
-                                        variant="contained"
-                                        size="small"
-                                        color="info"
-                                        onClick={() =>
-                                          openPayDialog({ docId, sectionIndex, rowIndex, row, headers: headerRow })
-                                        }
-                                      >
-                                        Masukkan Referensi Pembayaran
-                                      </Button>
-                                    );
-                                  })()}
+                                  {/* Removed PAY_REF display and "Masukkan Referensi Pembayaran" button */}
                                 </Box>
                               )}
                             </Box>

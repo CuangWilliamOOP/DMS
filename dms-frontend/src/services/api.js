@@ -42,4 +42,9 @@ API.interceptors.response.use(
   }
 );
 
+export const uploadPaymentProof = (formData) => API.post('/payment-proofs/', formData);
+
+export const getPaymentProofs = (main_document) =>
+  API.get(`/payment-proofs/?main_document=${main_document}`);
+
 export default API;

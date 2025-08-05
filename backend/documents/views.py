@@ -14,13 +14,14 @@ from rest_framework.decorators import api_view, action, permission_classes
 from rest_framework.generics import RetrieveUpdateAPIView
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.exceptions import ValidationError
 
 from .gpt_parser import gpt_parse_subsections_from_image
-from .models import Document, SupportingDocument, UserSettings
-from .serializers import DocumentSerializer, SupportingDocumentSerializer, UserSettingsSerializer
+from .models import Document, SupportingDocument, UserSettings, PaymentProof
+from .serializers import DocumentSerializer, SupportingDocumentSerializer, UserSettingsSerializer, PaymentProofSerializer
 from .utils import generate_unique_item_ref_code, recalc_totals
 
-
+# ------------------ DocumentViewSet ------------------
 class DocumentViewSet(viewsets.ModelViewSet):
     queryset = Document.objects.all().order_by("-created_at")
     serializer_class = DocumentSerializer
@@ -153,6 +154,7 @@ class DocumentViewSet(viewsets.ModelViewSet):
         return Response(serializer.data)
 
 
+# ------------------ SupportingDocumentViewSet ------------------
 class SupportingDocumentViewSet(viewsets.ModelViewSet):
     serializer_class = SupportingDocumentSerializer
     permission_classes = [IsAuthenticated]
@@ -169,7 +171,7 @@ class SupportingDocumentViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         item_ref_code = self.request.data.get("item_ref_code")
-        if not item_ref_code:                       # ← restore guard
+        if not item_ref_code:
             return Response(
                 {"detail": "item_ref_code diperlukan."},
                 status=drf_status.HTTP_400_BAD_REQUEST,
@@ -261,10 +263,57 @@ class SupportingDocumentViewSet(viewsets.ModelViewSet):
 
         os.remove(temp_path)
 
+# ------------------ PaymentProofViewSet ------------------
+class PaymentProofViewSet(viewsets.ModelViewSet):
+    queryset = PaymentProof.objects.all()
+    serializer_class = PaymentProofSerializer
+    permission_classes = [IsAuthenticated]
 
-# -----------------------------------------------------------------------------
-#                    GPT‑VISION PARSE ➜ CREATE DOCUMENT
-# -----------------------------------------------------------------------------
+    def get_queryset(self):
+        qs = PaymentProof.objects.all()
+        main_document = self.request.query_params.get("main_document")
+        if main_document:
+            qs = qs.filter(main_document_id=main_document)
+        return qs
+
+    def perform_create(self, serializer):
+        try:
+            main_doc = serializer.validated_data["main_document"]
+            section_index = serializer.validated_data["section_index"]
+            item_index = serializer.validated_data["item_index"]
+            file = serializer.validated_data["file"]
+
+            # Try to get existing instance
+            existing = PaymentProof.objects.filter(
+                main_document=main_doc,
+                section_index=section_index,
+                item_index=item_index
+            ).first()
+
+            if existing:
+                # Replace file
+                if existing.file:
+                    existing.file.delete(save=False)
+                existing.file = file
+                existing.uploaded_at = timezone.now()
+                existing.save()
+                serializer.instance = existing  # Tell DRF this is the instance to return
+            else:
+                serializer.save()
+        except Exception as e:
+            raise ValidationError({'detail': str(e)})
+
+# ------------------ UserSettingsView ------------------
+class UserSettingsView(RetrieveUpdateAPIView):
+    serializer_class = UserSettingsSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_object(self):
+        # create row on-the-fly the first time
+        obj, _ = UserSettings.objects.get_or_create(user=self.request.user)
+        return obj
+
+# ------------------ GPT‑VISION PARSE ➜ CREATE DOCUMENT ------------------
 @api_view(["POST"])
 def parse_and_store_view(request):
     uploaded_file = request.FILES.get("file")
@@ -313,7 +362,7 @@ def parse_and_store_view(request):
 
     return JsonResponse({"document_id": doc.id, "document_code": doc.document_code})
 
-
+# ------------------ Auth & User Info ------------------
 @api_view(['POST'])
 def login_view(request):
     username = request.data.get('username')
@@ -336,7 +385,6 @@ def login_view(request):
 
     return Response({"error": "Invalid credentials"}, status=drf_status.HTTP_401_UNAUTHORIZED)
 
-
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def user_info(request):
@@ -346,13 +394,3 @@ def user_info(request):
         "username": user.username,
         "groups": groups,
     })
-
-
-class UserSettingsView(RetrieveUpdateAPIView):
-    serializer_class = UserSettingsSerializer
-    permission_classes = [IsAuthenticated]
-
-    def get_object(self):
-        # create row on-the-fly the first time
-        obj, _ = UserSettings.objects.get_or_create(user=self.request.user)
-        return obj

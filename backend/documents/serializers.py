@@ -3,7 +3,7 @@
 
 from rest_framework import serializers
 
-from .models import Document, SupportingDocument, UserSettings
+from .models import Document, SupportingDocument, UserSettings, PaymentProof
 
 
 class DocumentSerializer(serializers.ModelSerializer):
@@ -41,3 +41,10 @@ class UserSettingsSerializer(serializers.ModelSerializer):
     class Meta:
         model = UserSettings
         fields = ("idle_timeout", "theme_mode")
+
+
+class PaymentProofSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PaymentProof
+        fields = "__all__"
+        read_only_fields = ("identifier", "uploaded_at")
