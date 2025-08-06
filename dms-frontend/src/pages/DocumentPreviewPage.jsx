@@ -19,6 +19,7 @@ import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import API from '../services/api';
 import { useTheme } from '@mui/material/styles';
 import { ItemDocsPreview } from '../components/DocumentTableParts';
+import PaymentProofTab from '../components/PaymentProofTab';
 
 const indoDate = (dt) =>
   dt
@@ -43,6 +44,86 @@ const indoDateTime = (dt) =>
 const sortBySeq = (a = []) => [...a].sort(
   (x, y) => x.supporting_doc_sequence - y.supporting_doc_sequence
 );
+
+// ----- Subcomponent for per-item tab toggle -----
+function PreviewTabs({ docsForRow, docId, docStatus, sectionIndex, itemIndex }) {
+  const [tab, setTab] = useState('supportingDocs');
+  return (
+    <Box sx={{ my: 2 }}>
+      <Box
+        sx={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          width: '100%',
+          my: 1,
+          px: 1,
+        }}
+      >
+        <Button
+          disableElevation
+          variant="text"
+          onClick={() => setTab('supportingDocs')}
+          sx={{
+            flex: 1,
+            fontWeight: 500,
+            fontSize: "0.93rem",
+            color: tab === 'supportingDocs' ? 'primary.main' : 'text.secondary',
+            borderBottom: tab === 'supportingDocs' ? '2.2px solid' : '2.2px solid transparent',
+            borderRadius: 0,
+            mx: 1,
+            py: 1,
+            minWidth: 0,
+            letterSpacing: 0,
+            transition: 'color 0.14s, border-bottom 0.14s',
+            background: 'none',
+          }}
+        >
+          Dokumen Pendukung
+        </Button>
+        <Button
+          disableElevation
+          variant="text"
+          onClick={() => setTab('paymentProof')}
+          sx={{
+            flex: 1,
+            fontWeight: 500,
+            fontSize: "0.93rem",
+            color: tab === 'paymentProof' ? 'primary.main' : 'text.secondary',
+            borderBottom: tab === 'paymentProof' ? '2.2px solid' : '2.2px solid transparent',
+            borderRadius: 0,
+            mx: 1,
+            py: 1,
+            minWidth: 0,
+            letterSpacing: 0,
+            transition: 'color 0.14s, border-bottom 0.14s',
+            background: 'none',
+          }}
+        >
+          Bukti Pembayaran
+        </Button>
+      </Box>
+      {tab === 'supportingDocs' ? (
+        <ItemDocsPreview
+          itemDocs={docsForRow}
+          mainDocumentId={docId}
+          userRole="preview"
+          mainDocStatus={docStatus}
+          sectionIndex={sectionIndex}
+          itemIndex={itemIndex}
+          handleDeleteSupportingClick={() => {}}
+          onDocApproved={() => {}}
+        />
+      ) : (
+        <PaymentProofTab
+          document={{ id: docId }}
+          sectionIndex={sectionIndex}
+          itemIndex={itemIndex}
+        />
+      )}
+    </Box>
+  );
+}
 
 export default function DocumentPreviewPage() {
   const { companyName, dirKey, docCode } = useParams();
@@ -70,7 +151,6 @@ export default function DocumentPreviewPage() {
   const grandTotal =
     doc.parsed_json?.find((s) => s.grand_total)?.grand_total ?? '-';
 
-  // --- FLAT BACKGROUND, FOCUSED CARD ---
   const bgColor = isDark ? '#181c2f' : '#f6f7fb';
 
   return (
@@ -206,7 +286,6 @@ export default function DocumentPreviewPage() {
                           payIdx !== -1 && row.length > payIdx
                             ? String(row[payIdx]).trim()
                             : '';
-                        // supporting docs for this row
                         const docsForRow = support.filter(
                           (d) => d.section_index === i && d.row_index === j
                         );
@@ -235,13 +314,14 @@ export default function DocumentPreviewPage() {
                                 </li>
                               )}
                             </Box>
-                            {/* Dokumen pendukung (carousel) */}
-                            {docsForRow.length > 0 && (
-                              <ItemDocsPreview
-                                itemDocs={docsForRow}
-                                readOnly // hide approve / delete buttons
-                              />
-                            )}
+                            {/* --- Tabs for supporting/payment proof --- */}
+                            <PreviewTabs
+                              docsForRow={docsForRow}
+                              docId={doc.id}
+                              docStatus={doc.status}
+                              sectionIndex={i}
+                              itemIndex={j}
+                            />
                           </Box>
                         );
                       })}

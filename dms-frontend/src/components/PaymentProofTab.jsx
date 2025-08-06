@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { Box, Typography, Button, IconButton } from "@mui/material";
+import { Box, Typography, Button, IconButton, useTheme } from "@mui/material";
 import { useDropzone } from "react-dropzone";
 import API, { uploadPaymentProof, getPaymentProofs } from "../services/api";
 import Zoom from "react-medium-image-zoom";
@@ -11,6 +11,8 @@ function PaymentProofTab({ document, sectionIndex, itemIndex, onProofChanged }) 
   const [uploadedFile, setUploadedFile] = useState(null);
 
   const uploadBoxRef = useRef(null);
+  const theme = useTheme();
+  const isDark = theme.palette.mode === "dark";
 
   const fetchPaymentProof = useCallback(async () => {
     const { data } = await getPaymentProofs(document.id);
@@ -84,51 +86,56 @@ function PaymentProofTab({ document, sectionIndex, itemIndex, onProofChanged }) 
 
   return (
     <Box sx={{ p: 2 }}>
-        {paymentProof ? (
+      {paymentProof ? (
         <Box sx={{ mb: 2 }}>
-            {/* Header row: label left, delete right */}
-            <Box sx={{
+          {/* Header row: label left, delete right */}
+          <Box sx={{
             display: "flex",
             justifyContent: "space-between",
             alignItems: "center",
             mb: 1,
-            width: "100%"
-            }}>
-            <Typography variant="subtitle2" sx={{ fontWeight: 500 }}>
-                Bukti Pembayaran
-                {paymentProof.identifier && (
+            width: "100%",
+            // dark mode support
+            color: isDark ? "#e0e3ef" : "inherit",
+          }}>
+            <Typography variant="subtitle2" sx={{ fontWeight: 500, color: isDark ? "#e0e3ef" : "inherit" }}>
+              Bukti Pembayaran
+              {paymentProof.identifier && (
                 <span style={{
-                    fontSize: 13,
-                    color: "#7b7c8c",
-                    marginLeft: 10,
-                    fontWeight: 400,
-                    letterSpacing: 0.5
+                  fontSize: 13,
+                  color: isDark ? "#b0b2c0" : "#7b7c8c",
+                  marginLeft: 10,
+                  fontWeight: 400,
+                  letterSpacing: 0.5
                 }}>
-                    ({paymentProof.identifier})
+                  ({paymentProof.identifier})
                 </span>
-                )}
+              )}
             </Typography>
             <IconButton color="error" onClick={handleDelete}>
-                <DeleteIcon />
+              <DeleteIcon />
             </IconButton>
-            </Box>
-            {/* Centered image */}
-            <Box sx={{ display: "flex", justifyContent: "center" }}>
+          </Box>
+          {/* Centered image */}
+          <Box sx={{ display: "flex", justifyContent: "center" }}>
             <Zoom>
-                <img
+              <img
                 src={paymentProof.file}
                 alt="Payment Proof"
                 style={{
-                    maxWidth: "100%",
-                    maxHeight: 400,
-                    cursor: "zoom-in",
-                    display: "block"
+                  maxWidth: "100%",
+                  maxHeight: 400,
+                  cursor: "zoom-in",
+                  display: "block",
+                  background: isDark ? "#23243a" : "#fff",
+                  borderRadius: 8,
+                  boxShadow: isDark ? "0 2px 8px #181b2b55" : "0 2px 8px #1976d228"
                 }}
-                />
+              />
             </Zoom>
-            </Box>
+          </Box>
         </Box>
-        ) : (
+      ) : (
         <Box
           {...getRootProps()}
           ref={uploadBoxRef}
@@ -138,7 +145,8 @@ function PaymentProofTab({ document, sectionIndex, itemIndex, onProofChanged }) 
             if (uploadBoxRef.current) uploadBoxRef.current.focus();
           }}
           sx={{
-            border: "2px dashed #aaa",
+            border: "2px dashed",
+            borderColor: isDark ? "#444a5a" : "#aaa",
             borderRadius: 2,
             p: 4,
             textAlign: "center",
@@ -147,15 +155,22 @@ function PaymentProofTab({ document, sectionIndex, itemIndex, onProofChanged }) 
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            bgcolor: "#fafbfc",
+            bgcolor: isDark ? "#23243a" : "#fafbfc",
             outline: "none",
+            color: isDark ? "#e0e3ef" : "inherit",
           }}
         >
           <input {...getInputProps()} />
           <Button
             variant="contained"
             component="span"
-            sx={{ fontWeight: 600, borderRadius: 2, px: 4 }}
+            sx={{
+              fontWeight: 600,
+              borderRadius: 2,
+              px: 4,
+              bgcolor: isDark ? "primary.dark" : "primary.main",
+              color: "#fff"
+            }}
             tabIndex={-1}
           >
             Upload Bukti Pembayaran
@@ -164,8 +179,14 @@ function PaymentProofTab({ document, sectionIndex, itemIndex, onProofChanged }) 
       )}
 
       {!paymentProof && uploadedFile && (
-        <Box sx={{ display: "flex", alignItems: "center", gap: 2, mt: 2 }}>
-          <Typography>{uploadedFile.name}</Typography>
+        <Box sx={{
+          display: "flex",
+          alignItems: "center",
+          gap: 2,
+          mt: 2,
+          color: isDark ? "#e0e3ef" : "inherit"
+        }}>
+          <Typography sx={{ color: isDark ? "#e0e3ef" : "inherit" }}>{uploadedFile.name}</Typography>
           <IconButton color="error" onClick={() => setUploadedFile(null)}>
             <DeleteIcon />
           </IconButton>
@@ -174,7 +195,11 @@ function PaymentProofTab({ document, sectionIndex, itemIndex, onProofChanged }) 
             color="primary"
             disabled={!uploadedFile}
             onClick={handleUpload}
-            sx={{ ml: 2 }}
+            sx={{
+              ml: 2,
+              bgcolor: isDark ? "primary.dark" : "primary.main",
+              color: "#fff"
+            }}
           >
             Upload
           </Button>

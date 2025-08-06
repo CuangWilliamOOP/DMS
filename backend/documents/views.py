@@ -74,12 +74,7 @@ class DocumentViewSet(viewsets.ModelViewSet):
             doc.rejected_at = timezone.now()
 
         elif new_status == "sudah_dibayar":
-            # 🔒 ensure every row has PAY_REF
-            if not self._all_rows_have_pay_ref(doc.parsed_json):
-                return Response(
-                    {"detail": "Semua item harus memiliki PAY_REF sebelum menyelesaikan pembayaran."},
-                    status=drf_status.HTTP_400_BAD_REQUEST,
-                )
+            # (Old logic for PAY_REF removed—now only payment proof is required)
             doc.paid_at = timezone.now()
             doc.archived = True
             doc.archived_at = timezone.now()
@@ -389,6 +384,11 @@ def login_view(request):
 @permission_classes([IsAuthenticated])
 def user_info(request):
     user = request.user
+    groups = list(user.groups.values_list('name', flat=True))
+    return Response({
+        "username": user.username,
+        "groups": groups,
+    })
     groups = list(user.groups.values_list('name', flat=True))
     return Response({
         "username": user.username,
