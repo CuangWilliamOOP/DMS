@@ -1,3 +1,5 @@
+// File: src/pages/CompanyDirectoryPage.jsx
+
 import React, { useEffect, useState } from 'react';
 import {
   Box,
@@ -9,7 +11,6 @@ import {
   Paper,
   IconButton,
   Button,
-  Fade,
 } from '@mui/material';
 import FolderOpenIcon from '@mui/icons-material/FolderOpen';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
@@ -20,6 +21,13 @@ import { useParams, useNavigate, Link as RouterLink } from 'react-router-dom';
 import API from '../services/api';
 import { useTheme } from '@mui/material/styles';
 
+// ————————————————————————————————————————————————————————————
+// Helpers
+// ————————————————————————————————————————————————————————————
+const slugify = (name = '') =>
+  name.toLowerCase().replace(/\./g, '').replace(/\s+/g, '-').replace(/-+/g, '-');
+
+// Map of slug → pretty name
 const companyFullNames = {
   'cv-asn': 'CV. Alam Subur Nusantara',
   'pt-ttu': 'PT. Tunggal Tunggul Unggul',
@@ -28,24 +36,9 @@ const companyFullNames = {
 };
 
 const directories = [
-  {
-    key: 'qlola',
-    label: 'Transaksi QLOLA',
-    color: '#90caf9',
-    docTypeFilter: 'tagihan_pekerjaan',
-  },
-  {
-    key: 'internal',
-    label: 'Transaksi Internal',
-    color: '#a5d6a7',
-    docTypeFilter: 'tagihan_internal',
-  },
-  {
-    key: 'lain',
-    label: 'Dokumen Lain',
-    color: '#ffcc80',
-    docTypeFilter: 'lainnya',
-  },
+  { key: 'qlola', label: 'Transaksi QLOLA', color: '#90caf9', docTypeFilter: 'tagihan_pekerjaan' },
+  { key: 'internal', label: 'Transaksi Internal', color: '#a5d6a7', docTypeFilter: 'tagihan_internal' },
+  { key: 'lain', label: 'Dokumen Lain', color: '#ffcc80', docTypeFilter: 'lainnya' },
 ];
 
 const breadcrumbSx = {
@@ -54,13 +47,14 @@ const breadcrumbSx = {
   '& a, & .MuiTypography-root': { fontWeight: 600 },
 };
 
-function CompanyDirectoryPage() {
+export default function CompanyDirectoryPage() {
   const { companyName, dirKey } = useParams();
   const navigate = useNavigate();
   const theme = useTheme();
   const isDark = theme.palette.mode === 'dark';
 
-  const slug = (companyName || '').toLowerCase().replace(/\./g, '');
+  // Normalize the slug param to be safe (mirrors DirectoryPage)
+  const slug = slugify(companyName || '');
   const fullName = companyFullNames[slug] || slug.toUpperCase();
   const selectedDir = directories.find((d) => d.key === dirKey) || null;
 
@@ -71,8 +65,9 @@ function CompanyDirectoryPage() {
     const fetchDocs = async () => {
       try {
         const res = await API.get('/documents/');
+        const companyCode = slug.replace(/^pt-/, '').replace(/^cv-/, '');
         const filtered = res.data.filter(
-          (d) => d.archived && d.status === 'sudah_dibayar' && d.company === slug.replace('pt-', '').replace('cv-', '')
+          (d) => d.archived && d.status === 'sudah_dibayar' && d.company === companyCode
         );
         setAllDocs(filtered);
       } catch (err) {
@@ -101,12 +96,12 @@ function CompanyDirectoryPage() {
     }
   };
 
-  // --- SOFT BACKGROUND, NO GRADIENT ---
-  const bgColor = isDark ? '#1a2036' : '#f5f7fc';
+  // Consistent black-leaning dark background (matches DirectoryPage)
+  const bgColor = isDark ? '#181a29' : '#f5f7fc';
 
   return (
     <>
-      {/* --- FULL PAGE BACKGROUND --- */}
+      {/* Full-page background */}
       <Box
         sx={{
           position: 'fixed',
@@ -119,12 +114,13 @@ function CompanyDirectoryPage() {
           transition: 'background 0.3s',
         }}
       />
+
       <Box
         sx={{
           minHeight: '100vh',
           px: { xs: 1, sm: 3, md: 6 },
           py: { xs: 3, sm: 6 },
-          mt:-10,
+          mt: -10,
           position: 'relative',
         }}
       >
@@ -134,7 +130,7 @@ function CompanyDirectoryPage() {
             Direktori
           </Link>
           {selectedDir ? (
-            <Link component={RouterLink} underline="hover" to={`/directory/${companyName}`}>
+            <Link component={RouterLink} underline="hover" to={`/directory/${slug}`}>
               {fullName}
             </Link>
           ) : (
@@ -145,7 +141,7 @@ function CompanyDirectoryPage() {
           )}
         </Breadcrumbs>
 
-        {/* --- Directory/Folders --- */}
+        {/* Directory tiles */}
         {!selectedDir && (
           <Grid container spacing={3}>
             {directories.map((dir, idx) => (
@@ -157,36 +153,37 @@ function CompanyDirectoryPage() {
                 >
                   <Paper
                     elevation={2}
+                    className="dir-card"
                     sx={{
                       p: 3,
                       textAlign: 'center',
                       cursor: 'pointer',
                       borderRadius: 3,
-                      background: isDark ? '#22264a' : '#fff',
+                      background: isDark ? '#1b1f36' : '#fff',
                       border: `2px solid ${dir.color}`,
                       boxShadow: isDark
                         ? '0 2px 12px 0 #16123b33'
                         : '0 4px 12px 0 #b2c6fc18',
-                      transition: 'box-shadow 0.23s, transform 0.18s, border 0.2s',
+                      transition: 'box-shadow 0.23s, transform 0.18s, border 0.2s, background 0.18s',
                       '&:hover': {
-                        boxShadow: isDark
-                          ? '0 8px 32px #19163c44'
-                          : '0 8px 36px #b9caf82c',
+                        boxShadow: isDark ? '0 8px 32px #19163c44' : '0 8px 36px #b9caf82c',
                         border: `2.7px solid ${dir.color}`,
                         transform: 'translateY(-4px) scale(1.025)',
-                        background: isDark ? '#202241' : '#f8fafc',
+                        background: isDark ? '#181c2f' : '#f8fafc',
+                      },
+                      '&:focus-visible': {
+                        outline: `3px solid ${dir.color}`,
+                        outlineOffset: 2,
                       },
                     }}
-                    onClick={() =>
-                      navigate(`/directory/${companyName}/${dir.key}`)
-                    }
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`Buka folder ${dir.label}`}
+                    onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && navigate(`/directory/${slug}/${dir.key}`)}
+                    onClick={() => navigate(`/directory/${slug}/${dir.key}`)}
                   >
                     <FolderOpenIcon sx={{ fontSize: 56, color: dir.color }} />
-                    <Typography
-                      variant="subtitle1"
-                      fontWeight="medium"
-                      sx={{ mt: 2, fontSize: 19 }}
-                    >
+                    <Typography variant="subtitle1" fontWeight="medium" sx={{ mt: 2, fontSize: 19 }}>
                       {dir.label}
                     </Typography>
                   </Paper>
@@ -196,7 +193,7 @@ function CompanyDirectoryPage() {
           </Grid>
         )}
 
-        {/* --- Back button & Docs in this Folder --- */}
+        {/* Back button & docs grid */}
         {selectedDir && (
           <>
             <Box sx={{ mb: 2 }}>
@@ -204,7 +201,7 @@ function CompanyDirectoryPage() {
                 variant="outlined"
                 color="primary"
                 startIcon={<ArrowBackIcon />}
-                onClick={() => navigate(`/directory/${companyName}`)}
+                onClick={() => navigate(`/directory/${slug}`)}
                 sx={{
                   borderRadius: 3,
                   fontWeight: 600,
@@ -216,6 +213,7 @@ function CompanyDirectoryPage() {
                 Kembali ke Daftar Direktori
               </Button>
             </Box>
+
             {loading ? (
               <CircularProgress sx={{ mt: 4 }} />
             ) : docsToDisplay.length === 0 ? (
@@ -233,28 +231,39 @@ function CompanyDirectoryPage() {
                     >
                       <Paper
                         elevation={7}
+                        className="doc-card"
                         sx={{
                           p: 3,
                           borderRadius: '22px',
                           minHeight: 210,
                           textAlign: 'center',
                           cursor: 'pointer',
-                          background: '#fff',
+                          background: isDark ? '#232949' : '#fff',
                           border: '1.5px solid #edf0fa',
-                          boxShadow: '0 10px 32px 0 #b6c9f344',
+                          boxShadow: isDark ? '0 10px 32px 0 #0a0d1e88' : '0 10px 32px 0 #b6c9f344',
                           position: 'relative',
-                          transition: 'box-shadow 0.18s, transform 0.17s',
+                          transition: 'box-shadow 0.18s, transform 0.17s, background 0.18s',
                           '&:hover': {
-                            boxShadow: '0 18px 48px 0 #b6c9f355',
+                            boxShadow: isDark ? '0 18px 48px 0 #0a0d1ea8' : '0 18px 48px 0 #b6c9f355',
                             transform: 'translateY(-3px) scale(1.018)',
+                            background: isDark ? '#202542' : '#fdfefe',
+                          },
+                          '&:focus-visible': {
+                            outline: '3px solid #7e9be6',
+                            outlineOffset: 2,
                           },
                           display: 'flex',
                           flexDirection: 'column',
                           alignItems: 'center',
                           justifyContent: 'center',
                         }}
+                        role="button"
+                        tabIndex={0}
+                        aria-label={`Buka ${doc.document_code}`}
+                        onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') &&
+                          navigate(`/directory/${slug}/${selectedDir.key}/preview/${doc.document_code}`)}
                         onClick={() =>
-                          navigate(`/directory/${companyName}/${selectedDir.key}/preview/${doc.document_code}`)
+                          navigate(`/directory/${slug}/${selectedDir.key}/preview/${doc.document_code}`)
                         }
                       >
                         <Box
@@ -275,20 +284,14 @@ function CompanyDirectoryPage() {
                               width: 54,
                               height: 66,
                               borderRadius: '8px 16px 12px 12px',
-                              background: '#f8fafc',
+                              background: isDark ? '#1e2340' : '#f8fafc',
                               border: '1.2px solid #e3e6f3',
                               zIndex: 1,
                             }}
                           />
                           <DescriptionOutlinedIcon
-                            sx={{
-                              fontSize: 44,
-                              color: '#7e9be6',
-                              zIndex: 2,
-                              position: 'relative',
-                            }}
+                            sx={{ fontSize: 44, color: '#7e9be6', zIndex: 2, position: 'relative' }}
                           />
-                          {/* Optional: Fake folded corner using a small triangle div */}
                           <Box
                             sx={{
                               position: 'absolute',
@@ -306,11 +309,7 @@ function CompanyDirectoryPage() {
                             }}
                           />
                         </Box>
-                        <Typography
-                          variant="h6"
-                          fontWeight={700}
-                          sx={{ letterSpacing: 0.7, mb: 0.8, color: '#232849' }}
-                        >
+                        <Typography variant="h6" fontWeight={700} sx={{ letterSpacing: 0.7, mb: 0.8, color: isDark ? '#e6ecff' : '#232849' }}>
                           #{doc.document_code}
                         </Typography>
                         <Typography variant="body2" sx={{ mb: 2, color: 'text.secondary' }}>
@@ -320,7 +319,7 @@ function CompanyDirectoryPage() {
                           sx={{
                             px: 2,
                             py: 1,
-                            background: '#f5f8ff',
+                            background: isDark ? '#1a2142' : '#f5f8ff',
                             borderRadius: 2.7,
                             fontWeight: 700,
                             fontSize: 15,
@@ -331,11 +330,11 @@ function CompanyDirectoryPage() {
                         >
                           Sudah Dibayar
                         </Box>
-                        {/* Show delete only for owner */}
                         {localStorage.getItem('role') === 'owner' && (
                           <IconButton
                             sx={{ position: 'absolute', top: 9, right: 9, color: '#f55' }}
                             onClick={(e) => { e.stopPropagation(); handleDelete(doc.id); }}
+                            aria-label="Hapus dokumen"
                           >
                             <DeleteIcon />
                           </IconButton>
@@ -352,5 +351,3 @@ function CompanyDirectoryPage() {
     </>
   );
 }
-
-export default CompanyDirectoryPage;

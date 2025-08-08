@@ -64,7 +64,7 @@ export function SupportingDocApproval({ open, onClose, doc, afterApprove }) {
   );
 }
 
-/** Komponen carousel untuk menampilkan dokumen pendukung (gambar, PDF, Excel, dsb). */
+/** Komponen carousel untuk menampilkan dokumen pendukung + (opsional) tab Bukti Pembayaran. */
 export function ItemDocsPreview({
   itemDocs: initialItemDocs,
   mainDocumentId,
@@ -74,7 +74,7 @@ export function ItemDocsPreview({
   itemIndex,
   handleDeleteSupportingClick,
   onDocApproved,
-  onProofChanged,        // 👈 add
+  readOnly = false, // ← NEW: tampilan saja (sembunyikan tombol approve/hapus)
 }) {
   // Helper: always sort by supporting_doc_sequence
   const sortBySeq = (arr = []) =>
@@ -88,19 +88,23 @@ export function ItemDocsPreview({
   const [activeTab, setActiveTab] = useState('supportingDocs');
   const prevDocsLength = React.useRef(0);
 
+  // Use localStorage role when not provided (e.g., DocumentPreviewPage)
+  const effectiveUserRole = userRole || localStorage.getItem('role');
+
   // sinkronisasi prop → state, always sorted
   useEffect(() => {
     setDocs(sortBySeq(initialItemDocs));
-    // If docs got longer, set to last; otherwise, stay where you are
+    // If docs grew and in editable context, jump to last
     if (
-      (userRole === "employee" || userRole === "admin") &&
-      ["draft", "belum_disetujui"].includes(mainDocStatus) &&
+      !readOnly &&
+      (effectiveUserRole === 'employee' || effectiveUserRole === 'admin') &&
+      ['draft', 'belum_disetujui'].includes(mainDocStatus) &&
       (initialItemDocs?.length || 0) > prevDocsLength.current
     ) {
       setCurrentIndex((initialItemDocs?.length || 1) - 1);
     }
     prevDocsLength.current = initialItemDocs?.length || 0;
-  }, [initialItemDocs]);
+  }, [initialItemDocs, mainDocStatus, readOnly, effectiveUserRole]);
 
   // Pastikan currentIndex valid
   useEffect(() => {
@@ -131,7 +135,8 @@ export function ItemDocsPreview({
   const handlePrev = () => currentIndex > 0 && setCurrentIndex((p) => p - 1);
   const handleNext = () => currentIndex < docs.length - 1 && setCurrentIndex((p) => p + 1);
 
-  if (docs.length === 0) return <Typography variant="body2">Tidak ada dokumen pendukung.</Typography>;
+  if (docs.length === 0)
+    return <Typography variant="body2">Tidak ada dokumen pendukung.</Typography>;
 
   const currentDoc = docs[currentIndex] || {};
 
@@ -168,7 +173,7 @@ export function ItemDocsPreview({
 
   return (
     <Box sx={{ mt: 1, border: '1px solid #eee', p: 2, borderRadius: 2 }}>
-      {/* ───── TAB BUTTONS – only show after main doc is approved ───── */}
+      {/* ───── TAB BUTTONS – keep visible in readOnly for viewing ───── */}
       {mainDocStatus === 'disetujui' && (
         <Box
           sx={{
@@ -187,7 +192,7 @@ export function ItemDocsPreview({
             sx={{
               flex: 1,
               fontWeight: 500,
-              fontSize: "0.85rem",    // Smaller font
+              fontSize: '0.85rem',
               color: activeTab === 'supportingDocs' ? 'primary.main' : 'text.secondary',
               borderBottom: activeTab === 'supportingDocs' ? '2.2px solid' : '2.2px solid transparent',
               borderRadius: 0,
@@ -208,7 +213,7 @@ export function ItemDocsPreview({
             sx={{
               flex: 1,
               fontWeight: 500,
-              fontSize: "0.85rem",    // Smaller font
+              fontSize: '0.85rem',
               color: activeTab === 'paymentProof' ? 'primary.main' : 'text.secondary',
               borderBottom: activeTab === 'paymentProof' ? '2.2px solid' : '2.2px solid transparent',
               borderRadius: 0,
@@ -225,10 +230,8 @@ export function ItemDocsPreview({
         </Box>
       )}
 
-
-
-      {/* SINGLE conditional block – NO DUPLICATES */}
-      {(mainDocStatus !== 'disetujui' || activeTab === 'supportingDocs') ? (
+      {/* SINGLE conditional block */}
+      {mainDocStatus !== 'disetujui' || activeTab === 'supportingDocs' ? (
         <>
           <Typography variant="subtitle2" fontWeight="bold" sx={{ mb: 1 }}>
             Dokumen {activeIdx + 1}/{docs.length}  •  Total: {docs.length}
@@ -248,9 +251,9 @@ export function ItemDocsPreview({
 
           {renderFilePreview(currentDoc.file)}
 
-          {/* actions */}
+          {/* actions – hidden in readOnly */}
           <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 2, mt: 2 }}>
-            {canEvaluateSupportingDoc(userRole, currentDoc.status, mainDocStatus) && (
+            {!readOnly && canEvaluateSupportingDoc(effectiveUserRole, currentDoc.status, mainDocStatus) && (
               <Button
                 variant="contained"
                 size="small"
@@ -260,7 +263,7 @@ export function ItemDocsPreview({
                 Setujui
               </Button>
             )}
-            {canDeleteSupportingDoc(userRole, mainDocStatus) && (
+            {!readOnly && canDeleteSupportingDoc(effectiveUserRole, mainDocStatus) && (
               <IconButton color="error" onClick={() => handleDeleteSupportingClick(currentDoc)}>
                 <DeleteIcon />
               </IconButton>
@@ -279,10 +282,9 @@ export function ItemDocsPreview({
           document={{ id: mainDocumentId }}
           sectionIndex={sectionIndex}
           itemIndex={itemIndex}
-          onProofChanged={onProofChanged}   /* 👈 forward it */
+          readOnly={readOnly}
         />
       )}
-
     </Box>
   );
 }

@@ -14,14 +14,19 @@ from rest_framework.decorators import api_view, action, permission_classes
 from rest_framework.generics import RetrieveUpdateAPIView
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
-from rest_framework.exceptions import ValidationError
+from rest_framework.exceptions import PermissionDenied
 
 from .gpt_parser import gpt_parse_subsections_from_image
 from .models import Document, SupportingDocument, UserSettings, PaymentProof
-from .serializers import DocumentSerializer, SupportingDocumentSerializer, UserSettingsSerializer, PaymentProofSerializer
+from .serializers import (
+    DocumentSerializer,
+    SupportingDocumentSerializer,
+    UserSettingsSerializer,
+    PaymentProofSerializer,
+)
 from .utils import generate_unique_item_ref_code, recalc_totals
 
-# ------------------ DocumentViewSet ------------------
+
 class DocumentViewSet(viewsets.ModelViewSet):
     queryset = Document.objects.all().order_by("-created_at")
     serializer_class = DocumentSerializer
@@ -74,7 +79,12 @@ class DocumentViewSet(viewsets.ModelViewSet):
             doc.rejected_at = timezone.now()
 
         elif new_status == "sudah_dibayar":
-            # (Old logic for PAY_REF removed—now only payment proof is required)
+            # 🔒 ensure every row has PAY_REF
+            if not self._all_rows_have_pay_ref(doc.parsed_json):
+                return Response(
+                    {"detail": "Semua item harus memiliki PAY_REF sebelum menyelesaikan pembayaran."},
+                    status=drf_status.HTTP_400_BAD_REQUEST,
+                )
             doc.paid_at = timezone.now()
             doc.archived = True
             doc.archived_at = timezone.now()
@@ -149,7 +159,6 @@ class DocumentViewSet(viewsets.ModelViewSet):
         return Response(serializer.data)
 
 
-# ------------------ SupportingDocumentViewSet ------------------
 class SupportingDocumentViewSet(viewsets.ModelViewSet):
     serializer_class = SupportingDocumentSerializer
     permission_classes = [IsAuthenticated]
@@ -164,14 +173,20 @@ class SupportingDocumentViewSet(viewsets.ModelViewSet):
             qs = qs.filter(doc_type=doc_type)
         return qs
 
+    # 🔒 Block edits when main doc is archived / paid
+    def _ensure_main_doc_is_editable(self, main_doc: Document):
+        if main_doc.archived or main_doc.status == "sudah_dibayar":
+            raise PermissionDenied("Dokumen di direktori; tidak bisa diubah.")
+
     def perform_create(self, serializer):
         item_ref_code = self.request.data.get("item_ref_code")
-        if not item_ref_code:
+        if not item_ref_code:  # ← restore guard
             return Response(
                 {"detail": "item_ref_code diperlukan."},
                 status=drf_status.HTTP_400_BAD_REQUEST,
             )
         main_doc = serializer.validated_data["main_document"]
+        self._ensure_main_doc_is_editable(main_doc)
 
         # Enforce only one proof_of_payment per item
         if serializer.validated_data.get("doc_type") == "proof_of_payment":
@@ -198,6 +213,9 @@ class SupportingDocumentViewSet(viewsets.ModelViewSet):
 
     def partial_update(self, request, *args, **kwargs):
         instance: SupportingDocument = self.get_object()
+        # 🔒 lock after archive/paid
+        self._ensure_main_doc_is_editable(instance.main_document)
+
         if request.data.get("status") == "disetujui":
             instance.approved_at = timezone.now()
             instance.status = "disetujui"
@@ -205,6 +223,12 @@ class SupportingDocumentViewSet(viewsets.ModelViewSet):
                 self._embed_stamp(instance)
             instance.save()
         return super().partial_update(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        instance: SupportingDocument = self.get_object()
+        # 🔒 lock after archive/paid
+        self._ensure_main_doc_is_editable(instance.main_document)
+        return super().destroy(request, *args, **kwargs)
 
     def _embed_stamp(self, instance: SupportingDocument):
         """Stamp file only once; skip if already stamped."""
@@ -258,58 +282,11 @@ class SupportingDocumentViewSet(viewsets.ModelViewSet):
 
         os.remove(temp_path)
 
-# ------------------ PaymentProofViewSet ------------------
-class PaymentProofViewSet(viewsets.ModelViewSet):
-    queryset = PaymentProof.objects.all()
-    serializer_class = PaymentProofSerializer
-    permission_classes = [IsAuthenticated]
 
-    def get_queryset(self):
-        qs = PaymentProof.objects.all()
-        main_document = self.request.query_params.get("main_document")
-        if main_document:
-            qs = qs.filter(main_document_id=main_document)
-        return qs
-
-    def perform_create(self, serializer):
-        try:
-            main_doc = serializer.validated_data["main_document"]
-            section_index = serializer.validated_data["section_index"]
-            item_index = serializer.validated_data["item_index"]
-            file = serializer.validated_data["file"]
-
-            # Try to get existing instance
-            existing = PaymentProof.objects.filter(
-                main_document=main_doc,
-                section_index=section_index,
-                item_index=item_index
-            ).first()
-
-            if existing:
-                # Replace file
-                if existing.file:
-                    existing.file.delete(save=False)
-                existing.file = file
-                existing.uploaded_at = timezone.now()
-                existing.save()
-                serializer.instance = existing  # Tell DRF this is the instance to return
-            else:
-                serializer.save()
-        except Exception as e:
-            raise ValidationError({'detail': str(e)})
-
-# ------------------ UserSettingsView ------------------
-class UserSettingsView(RetrieveUpdateAPIView):
-    serializer_class = UserSettingsSerializer
-    permission_classes = [IsAuthenticated]
-
-    def get_object(self):
-        # create row on-the-fly the first time
-        obj, _ = UserSettings.objects.get_or_create(user=self.request.user)
-        return obj
-
-# ------------------ GPT‑VISION PARSE ➜ CREATE DOCUMENT ------------------
-@api_view(["POST"])
+# -----------------------------------------------------------------------------
+#                    GPT‑VISION PARSE ➜ CREATE DOCUMENT
+# -----------------------------------------------------------------------------
+@api_view(["POST"])    
 def parse_and_store_view(request):
     uploaded_file = request.FILES.get("file")
     if not uploaded_file:
@@ -357,7 +334,7 @@ def parse_and_store_view(request):
 
     return JsonResponse({"document_id": doc.id, "document_code": doc.document_code})
 
-# ------------------ Auth & User Info ------------------
+
 @api_view(['POST'])
 def login_view(request):
     username = request.data.get('username')
@@ -380,6 +357,7 @@ def login_view(request):
 
     return Response({"error": "Invalid credentials"}, status=drf_status.HTTP_401_UNAUTHORIZED)
 
+
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def user_info(request):
@@ -389,8 +367,56 @@ def user_info(request):
         "username": user.username,
         "groups": groups,
     })
-    groups = list(user.groups.values_list('name', flat=True))
-    return Response({
-        "username": user.username,
-        "groups": groups,
-    })
+
+
+class UserSettingsView(RetrieveUpdateAPIView):
+    serializer_class = UserSettingsSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_object(self):
+        # create row on-the-fly the first time
+        obj, _ = UserSettings.objects.get_or_create(user=self.request.user)
+        return obj
+
+
+class PaymentProofViewSet(viewsets.ModelViewSet):
+    queryset = PaymentProof.objects.all()
+    serializer_class = PaymentProofSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        qs = PaymentProof.objects.all()
+        main_document = self.request.query_params.get("main_document")
+        if main_document:
+            qs = qs.filter(main_document_id=main_document)
+        return qs
+
+    # 🔒 Block edits when main doc is archived / paid
+    def _ensure_editable(self, main_doc: Document):
+        if main_doc.archived or main_doc.status == "sudah_dibayar":
+            raise PermissionDenied(
+                "Dokumen sudah diarsipkan/dikirim ke direktori; bukti pembayaran tidak bisa diubah."
+            )
+
+    def perform_create(self, serializer):
+        # Replace existing proof if one exists, BUT lock after archive/paid
+        main_doc = serializer.validated_data["main_document"]
+        self._ensure_editable(main_doc)
+
+        PaymentProof.objects.filter(
+            main_document=main_doc,
+            section_index=serializer.validated_data["section_index"],
+            item_index=serializer.validated_data["item_index"],
+        ).delete()
+
+        serializer.save()
+
+    def partial_update(self, request, *args, **kwargs):
+        instance: PaymentProof = self.get_object()
+        self._ensure_editable(instance.main_document)
+        return super().partial_update(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        instance: PaymentProof = self.get_object()
+        self._ensure_editable(instance.main_document)
+        return super().destroy(request, *args, **kwargs)

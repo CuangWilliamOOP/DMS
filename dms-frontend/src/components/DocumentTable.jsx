@@ -807,12 +807,16 @@ function DocumentTable({ documents, refreshDocuments }) {
         key={`grand-${sectionIndex}`}
         sx={{
           mt: 2,
-          p: 1,
-          border: '1px solid #ccc',
-          display: 'inline-flex',
+          p: 1.2,
+          borderRadius: 2.5,
+          display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
           width: '100%',
+          background: (theme) =>
+            theme.palette.mode === 'dark' ? 'rgba(15,17,26,0.85)' : '#f5f8ff',
+          border: (theme) =>
+            theme.palette.mode === 'dark' ? '1px solid #2d3763' : '1px solid #e6ecfb',
         }}
       >
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
@@ -913,11 +917,19 @@ function DocumentTable({ documents, refreshDocuments }) {
       return (
         <Paper
           key={`section-${sectionIndex}`}
-          elevation={1}
+          elevation={2}
           sx={{
             mt: 2,
             p: 2,
-            borderLeft: '4px solid #1976d2',
+            borderRadius: 3,
+            background: (theme) =>
+              theme.palette.mode === 'dark' ? '#12141f' : '#fff',
+            boxShadow: (theme) =>
+              theme.palette.mode === 'dark'
+                ? '0 2px 18px #191c3840'
+                : '0 3px 14px #cfe0ff22',
+            borderLeft: (theme) =>
+              `4px solid ${theme.palette.mode === 'dark' ? '#4f78ff' : '#1976d2'}`,
           }}
         >
           <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
@@ -988,7 +1000,7 @@ function DocumentTable({ documents, refreshDocuments }) {
                           );
                         })}
                         <TableCell>
-                          <Box sx={{ display: 'inline-flex', gap: 1 }}>
+                          <Box sx={{ display: 'inline-flex', gap: 1, alignItems: 'center' }}>
                             {canEditMainDocument(userRole, docStatus) && (
                               <Button
                                 variant="outlined"
@@ -997,10 +1009,27 @@ function DocumentTable({ documents, refreshDocuments }) {
                                   e.stopPropagation();
                                   handleAttachDocClick(docId, company, sectionIndex, rowIndex);
                                 }}
+                                sx={{
+                                  textTransform: 'none',
+                                  borderRadius: 999,
+                                  px: 1.4,
+                                  lineHeight: 1.1,
+                                  borderColor: (theme) =>
+                                    theme.palette.mode === 'dark' ? '#384170' : '#cfd9ff',
+                                  background: (theme) =>
+                                    theme.palette.mode === 'dark' ? '#232a4b' : '#f7f9ff',
+                                  '&:hover': {
+                                    borderColor: (theme) =>
+                                      theme.palette.mode === 'dark' ? '#40509a' : '#b9c8ff',
+                                    background: (theme) =>
+                                      theme.palette.mode === 'dark' ? '#283157' : '#eef3ff',
+                                  },
+                                }}
                               >
                                 Dok
                               </Button>
                             )}
+
                             <IconButton
                               size="small"
                               color="primary"
@@ -1011,6 +1040,7 @@ function DocumentTable({ documents, refreshDocuments }) {
                             >
                               {expanded ? <KeyboardArrowUpIcon /> : <KeyboardArrowDownIcon />}
                             </IconButton>
+
                             {canEditMainDocument(userRole, docStatus) && (
                               <IconButton
                                 size="small"
@@ -1182,10 +1212,42 @@ function DocumentTable({ documents, refreshDocuments }) {
 
   return (
     <>
-      <TableContainer component={Paper} sx={{ mb: 2 }}>
-        <Table>
+      <TableContainer
+        component={Paper}
+        sx={{
+          mb: 2,
+          borderRadius: 4,
+          overflow: 'hidden',
+          background: (theme) =>
+            theme.palette.mode === 'dark'
+              ? 'linear-gradient(120deg, #0f111a 75%, #1b2240 100%)'
+              : 'linear-gradient(120deg, #ffffff 78%, #ecf3ff 100%)',
+          boxShadow: (theme) =>
+            theme.palette.mode === 'dark'
+              ? '0 6px 36px 0 #000c'
+              : '0 8px 28px 0 rgba(34,50,84,0.10)',
+          border: (theme) =>
+            theme.palette.mode === 'dark' ? '1px solid #232655' : '1px solid #e7ecfb',
+        }}
+      >
+        <Table
+          stickyHeader
+          sx={{
+            '& .MuiTableRow-hover:hover': {
+              backgroundColor: (theme) =>
+                theme.palette.mode === 'dark'
+                  ? 'rgba(88,112,180,0.08)'
+                  : 'rgba(25,118,210,0.08)',
+              transition: 'background-color 0.15s ease',
+            },
+            '& .MuiTableBody-root .MuiTableRow-root:nth-of-type(even)': {
+              backgroundColor: (theme) =>
+                theme.palette.mode === 'dark' ? 'rgba(255,255,255,0.02)' : '#fafcff',
+            },
+          }}
+        >
           <TableHead>
-            <TableRow>
+            <TableRow sx={{ '& th': { fontWeight: 700, letterSpacing: 0.2 } }}>
               <TableCell />
               <TableCell>KODE</TableCell>
               <TableCell>NAMA</TableCell>
@@ -1208,16 +1270,31 @@ function DocumentTable({ documents, refreshDocuments }) {
                     sx={{
                       cursor: expandDocTypes.includes(doc.doc_type) ? 'pointer' : 'default',
                       '&:hover': {
-                        backgroundColor: 'rgba(25, 118, 210, 0.08)',
+                        backgroundColor: 'transparent', // handled via Table sx above
+                        transform: 'translateY(-1px)',
                       },
+                      transition: 'transform 0.12s ease',
                     }}
                   >
-                    <TableCell>
+                    <TableCell sx={{ width: 52 }}>
                       {expandDocTypes.includes(doc.doc_type) && (
-                        <IconButton size="small" onClick={(e) => {
-                          e.stopPropagation();
-                          toggleRow(doc.id, doc.doc_type);
-                        }}>
+                        <IconButton
+                          size="small"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleRow(doc.id, doc.doc_type);
+                          }}
+                          sx={{
+                            border: (theme) =>
+                              theme.palette.mode === 'dark' ? '1px solid #2f3866' : '1px solid #e4e9fb',
+                            background: (theme) =>
+                              theme.palette.mode === 'dark' ? '#232a4b' : '#f7f9ff',
+                            '&:hover': {
+                              background: (theme) =>
+                                theme.palette.mode === 'dark' ? '#283157' : '#eef3ff',
+                            },
+                          }}
+                        >
                           {isExpanded ? <KeyboardArrowUpIcon /> : <KeyboardArrowDownIcon />}
                         </IconButton>
                       )}
@@ -1235,19 +1312,24 @@ function DocumentTable({ documents, refreshDocuments }) {
                             sx={{
                               display: 'inline-flex',
                               alignItems: 'center',
-                              px: 1.5,
-                              py: 0.6,
-                              borderRadius: '16px',
+                              gap: 0.6,
+                              px: 1.4,
+                              py: 0.5,
+                              borderRadius: '999px',
                               bgcolor,
                               color,
                               fontWeight: 700,
-                              fontSize: '0.92rem',
+                              fontSize: '0.9rem',
                               letterSpacing: 0.2,
-                              boxShadow: '0 1px 4px #c7d6e018',
+                              boxShadow: (theme) =>
+                                theme.palette.mode === 'dark'
+                                  ? 'inset 0 0 0 1px rgba(255,255,255,0.06)'
+                                  : 'inset 0 0 0 1px rgba(0,0,0,0.04)',
+                              border: (theme) =>
+                                theme.palette.mode === 'dark' ? '1px solid #2b335d' : '1px solid #e8edfb',
                             }}
                           >
-                            {icon}
-                            {label}
+                            {icon}{label}
                           </Box>
                         );
                       })()}

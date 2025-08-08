@@ -1,3 +1,5 @@
+// File: src/pages/DirectoryPage.jsx
+
 import React, { useState, useEffect } from 'react';
 import {
   Box,
@@ -6,27 +8,32 @@ import {
   Typography,
   TextField,
   InputAdornment,
-  Chip,
+  IconButton,
 } from '@mui/material';
-import { useNavigate } from 'react-router-dom';
-import BusinessIcon from '@mui/icons-material/Business';
 import SearchIcon from '@mui/icons-material/Search';
 import { motion } from 'framer-motion';
+import { useNavigate } from 'react-router-dom';
+import { useTheme } from '@mui/material/styles';
 
+// ————————————————————————————————————————————————————————————
+// Source data (unchanged)
+// ————————————————————————————————————————————————————————————
 const companies = [
-  { name: 'CV. ASN', type: 'CV', color: '#ffb86c', initials: 'ASN', gradient: 'linear-gradient(135deg,#ffd8b3,#ffb86c 80%)' },
-  { name: 'PT. TTU', type: 'PT', color: '#7ab8f7', initials: 'TTU', gradient: 'linear-gradient(135deg,#d0e4fc,#7ab8f7 80%)' },
-  { name: 'PT. OLS', type: 'PT', color: '#8edcbb', initials: 'OLS', gradient: 'linear-gradient(135deg,#c9f2e1,#8edcbb 80%)' },
-  { name: 'PT. OLM', type: 'PT', color: '#c99de8', initials: 'OLM', gradient: 'linear-gradient(135deg,#f3e0fb,#c99de8 80%)' },
+  { name: 'CV. ASN', type: 'CV', color: '#ffcc80', initials: 'ASN' },
+  { name: 'PT. TTU', type: 'PT', color: '#90caf9', initials: 'TTU' },
+  { name: 'PT. OLS', type: 'PT', color: '#a5d6a7', initials: 'OLS' },
+  { name: 'PT. OLM', type: 'PT', color: '#ce93d8', initials: 'OLM' },
 ];
 
-const typeColors = {
-  CV: '#f7c873',
-  PT: '#90caf9',
-};
+// Safer slug for routing: remove dots, collapse spaces/dashes
+const slugify = (name) =>
+  name.toLowerCase().replace(/\./g, '').replace(/\s+/g, '-').replace(/-+/g, '-');
 
 function DirectoryPage() {
   const navigate = useNavigate();
+  const theme = useTheme();
+  const isDark = theme.palette.mode === 'dark';
+
   const [searchTerm, setSearchTerm] = useState('');
   const [filteredCompanies, setFilteredCompanies] = useState(companies);
 
@@ -39,10 +46,9 @@ function DirectoryPage() {
   }, [searchTerm]);
 
   const handleClick = (companyName) => {
-    navigate(`/directory/${companyName.toLowerCase().replace(/\s+/g, '-')}`);
+    navigate(`/directory/${slugify(companyName)}`);
   };
 
-  // Group by type
   const groupedCompanies = filteredCompanies.reduce((groups, company) => {
     const type = company.type;
     if (!groups[type]) groups[type] = [];
@@ -52,198 +58,150 @@ function DirectoryPage() {
 
   return (
     <>
-      {/* --- FULL PAGE GRADIENT BACKGROUND --- */}
+      {/* Fixed background to keep strong black contrast in dark mode */}
       <Box
         sx={{
           position: 'fixed',
           zIndex: -1,
-          top: 0,
-          left: 0,
-          width: '100vw',
-          height: '100vh',
-          background: (theme) =>
-            theme.palette.mode === 'dark'
-              ? 'linear-gradient(135deg,#1c213a 60%,#292145 100%)'
-              : 'linear-gradient(135deg,#f6f9fe 60%,#efe5fa 100%)',
-          transition: 'background 0.3s',
+          inset: 0,
+          background: isDark ? '#181a29' : '#eaf2ff',
+          transition: 'background .3s',
         }}
       />
-      {/* --- FOREGROUND CONTENT --- */}
-      <Box
-        sx={{
-          minHeight: '100vh',
-          width: '100%',
-          mt: -10,
-          px: { xs: 1, sm: 3, md: 6 },
-          py: { xs: 3, sm: 6 },
-          position: 'relative',
-        }}
-      >
-        {/* Title */}
-        <Typography
-          variant="h4"
-          sx={{
-            fontWeight: 800,
-            letterSpacing: 0.3,
-            mb: 3,
-            color: (theme) => (theme.palette.mode === 'dark' ? '#fff' : '#222'),
-          }}
-        >
+
+      <Box sx={{ flexGrow: 1, px: { xs: 2, sm: 4 }, pb: 4, pt: -2, mt: -8 }}>
+        <Typography variant="h4" sx={{ fontWeight: 'bold', mb: 3 }}>
           Direktori Dokumen
         </Typography>
 
-        {/* Search */}
-        <Paper
-          elevation={2}
+        {/* Search input: compact, with clear button, readable in dark mode */}
+        <TextField
+          placeholder="Cari Perusahaan..."
+          variant="outlined"
+          size="small"
+          fullWidth
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
           sx={{
-            maxWidth: 420,
             mb: 4,
-            p: 1.3,
-            borderRadius: 3,
-            background: (theme) =>
-              theme.palette.mode === 'dark'
-                ? 'rgba(34,46,80,0.89)'
-                : 'rgba(255,255,255,0.96)',
-            boxShadow:
-              '0 2px 12px 0 rgba(33,150,243,0.07)',
+            '& .MuiOutlinedInput-root': {
+              borderRadius: 3,
+              background: (t) => (t.palette.mode === 'dark' ? '#111423' : '#fff'),
+            },
           }}
-        >
-          <TextField
-            placeholder="Cari Perusahaan…"
-            variant="standard"
-            fullWidth
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            InputProps={{
-              startAdornment: (
-                <InputAdornment position="start">
-                  <SearchIcon color="primary" />
-                </InputAdornment>
-              ),
-              disableUnderline: true,
-              sx: { fontSize: 18, pl: 1, color: 'inherit' },
-            }}
-            sx={{
-              fontWeight: 500,
-              bgcolor: 'transparent',
-              '& input': { bgcolor: 'transparent', fontSize: 18 },
-            }}
-          />
-        </Paper>
+          InputProps={{
+            startAdornment: (
+              <InputAdornment position="start">
+                <SearchIcon />
+              </InputAdornment>
+            ),
+            endAdornment: searchTerm ? (
+              <InputAdornment position="end">
+                <IconButton size="small" onClick={() => setSearchTerm('')}>
+                  ✕
+                </IconButton>
+              </InputAdornment>
+            ) : null,
+          }}
+        />
 
-        {/* Grouped Company List */}
-        <Box>
-          {Object.entries(groupedCompanies).map(([type, comps]) => (
-            <Box key={type} sx={{ mb: 5 }}>
-              <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
-                <Chip
-                  icon={<BusinessIcon />}
-                  label={type}
-                  sx={{
-                    fontWeight: 700,
-                    fontSize: 17,
-                    color: (theme) =>
-                      theme.palette.mode === 'dark' ? '#222242' : '#fff',
-                    background: typeColors[type] || '#bdbdbd',
-                    mr: 1.5,
-                    px: 1.5,
-                    py: 0.5,
-                    letterSpacing: 0.3,
-                    borderRadius: 2,
-                    boxShadow: '0 1px 4px 0 #6661',
-                  }}
-                />
-                <Typography
-                  variant="subtitle1"
-                  sx={{ fontWeight: 700, color: 'text.secondary', opacity: 0.75, ml: 1 }}
-                >
-                  {comps.length} perusahaan
-                </Typography>
+        {filteredCompanies.length === 0 && (
+          <Typography sx={{ mt: 2, color: 'text.secondary' }}>
+            Tidak ada perusahaan yang cocok.
+          </Typography>
+        )}
+
+        {Object.entries(groupedCompanies).map(([type, comps]) => (
+          <Box key={type} sx={{ mb: 5 }}>
+            <Typography
+              variant="h6"
+              sx={{ fontWeight: 'bold', mb: 2, display: 'flex', alignItems: 'center', gap: 1 }}
+            >
+              {type}
+              <Box
+                component="span"
+                sx={{
+                  px: 1,
+                  py: 0.25,
+                  borderRadius: 2,
+                  fontSize: 12,
+                  fontWeight: 700,
+                  bgcolor: (t) => (t.palette.mode === 'dark' ? '#0f1324' : '#eef3ff'),
+                  color: (t) => (t.palette.mode === 'dark' ? '#8fb1ff' : '#3688d6'),
+                  border: (t) => `1px solid ${t.palette.mode === 'dark' ? '#263057' : '#dbe6ff'}`,
+                }}
+              >
+                {comps.length}
               </Box>
-              <Grid container spacing={3}>
-                {comps.map((company, index) => (
-                  <Grid item xs={12} sm={6} md={3} key={company.name}>
-                    <motion.div
-                      initial={{ opacity: 0, y: 22 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ delay: 0.07 * index, duration: 0.34 }}
+            </Typography>
+
+            <Grid container spacing={3}>
+              {comps.map((company, index) => (
+                <Grid item xs={12} sm={6} md={3} key={index}>
+                  <motion.div
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.1 * index, duration: 0.4 }}
+                  >
+                    <Paper
+                      elevation={3}
+                      className="company-card"
+                      onClick={() => handleClick(company.name)}
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && handleClick(company.name)}
+                      aria-label={`Buka ${company.name}`}
+                      sx={{
+                        p: 3,
+                        textAlign: 'center',
+                        cursor: 'pointer',
+                        borderRadius: 3,
+                        background: (t) => (t.palette.mode === 'dark' ? '#1b1f36' : '#fff'),
+                        border: (t) => `1px solid ${t.palette.mode === 'dark' ? '#2a2f58' : '#e7ecfb'}`,
+                        boxShadow: (t) =>
+                          t.palette.mode === 'dark' ? '0 6px 22px #0009' : '0 8px 24px #b8c6f933',
+                        transition:
+                          'transform .18s ease, box-shadow .22s ease, border-color .18s ease, background .18s ease',
+                        '&:hover': {
+                          transform: 'translateY(-4px)',
+                          boxShadow: (t) =>
+                            t.palette.mode === 'dark' ? '0 12px 36px #000c' : '0 14px 40px #b8c6f94a',
+                          borderColor: company.color,
+                          background: (t) => (t.palette.mode === 'dark' ? '#181c2f' : '#f8faff'),
+                        },
+                      }}
                     >
-                      <Paper
-                        elevation={4}
-                        onClick={() => handleClick(company.name)}
+                      <Box
                         sx={{
-                          p: 3,
-                          cursor: 'pointer',
-                          borderRadius: 4,
-                          boxShadow: (theme) =>
-                            theme.palette.mode === 'dark'
-                              ? '0 4px 22px #21164a33'
-                              : '0 2px 12px #b9caf822',
-                          textAlign: 'center',
-                          background: company.gradient,
-                          transition: 'box-shadow 0.18s, transform 0.16s',
-                          '&:hover': {
-                            boxShadow: (theme) =>
-                              theme.palette.mode === 'dark'
-                                ? '0 8px 40px #19163c66'
-                                : '0 8px 38px #b9caf822',
-                            transform: 'translateY(-4px) scale(1.035)',
-                          },
-                          minHeight: 200,
+                          width: 80,
+                          height: 80,
+                          bgcolor: company.color,
+                          borderRadius: '50%',
+                          border: (t) => `3px solid ${t.palette.mode === 'dark' ? '#2f365f' : '#e6edff'}`,
+                          boxShadow: '0 6px 18px rgba(0,0,0,.18)',
                           display: 'flex',
-                          flexDirection: 'column',
                           alignItems: 'center',
                           justifyContent: 'center',
+                          mx: 'auto',
+                          mb: 2,
+                          transition: 'transform .18s ease, border-color .18s ease',
+                          '.company-card:hover &': { borderColor: company.color },
                         }}
                       >
-                        <Box
-                          sx={{
-                            width: 76,
-                            height: 76,
-                            borderRadius: '50%',
-                            background: 'rgba(255,255,255,0.24)',
-                            border: '2.5px solid #fff4',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            mb: 1.5,
-                            boxShadow: '0 1px 6px #b5aaff28',
-                            transition: 'background 0.22s',
-                          }}
-                        >
-                          <Typography
-                            variant="h4"
-                            sx={{
-                              fontWeight: 800,
-                              letterSpacing: 2,
-                              color: '#222',
-                              textShadow: '0 1px 4px #fff5',
-                            }}
-                          >
-                            {company.initials}
-                          </Typography>
-                        </Box>
-                        <Typography
-                          variant="subtitle1"
-                          sx={{
-                            fontWeight: 700,
-                            fontSize: 20,
-                            color: (theme) =>
-                              theme.palette.mode === 'dark'
-                                ? '#242849'
-                                : '#222',
-                          }}
-                        >
-                          {company.name}
+                        <Typography variant="h5" sx={{ fontWeight: 'bold', color: 'white' }}>
+                          {company.initials}
                         </Typography>
-                      </Paper>
-                    </motion.div>
-                  </Grid>
-                ))}
-              </Grid>
-            </Box>
-          ))}
-        </Box>
+                      </Box>
+                      <Typography variant="subtitle1" sx={{ fontWeight: 'medium' }}>
+                        {company.name}
+                      </Typography>
+                    </Paper>
+                  </motion.div>
+                </Grid>
+              ))}
+            </Grid>
+          </Box>
+        ))}
       </Box>
     </>
   );
