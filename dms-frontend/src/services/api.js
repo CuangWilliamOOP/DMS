@@ -1,35 +1,42 @@
 import axios from 'axios';
 
-const API = axios.create({
-  baseURL: 'http://127.0.0.1:8000/api',
-});
+// Decide the base URL:
+// - Dev: talk to your local Django
+// - Staging/Prod: same-origin '/api' (Nginx proxies it to Django)
+// - Optional: override with REACT_APP_API_BASE_URL
+const baseURL =
+  (process.env.REACT_APP_API_BASE_URL && process.env.REACT_APP_API_BASE_URL.trim()) ||
+  (process.env.NODE_ENV === 'development' ? 'http://127.0.0.1:8000/api' : '/api');
 
-// Add a request interceptor
+const API = axios.create({ baseURL });
+
+// Attach JWT if present
 API.interceptors.request.use(
   (config) => {
     const token = localStorage.getItem('accessToken');
-    if (token) {
-      config.headers['Authorization'] = `Bearer ${token}`;
-    }
+    if (token) config.headers['Authorization'] = `Bearer ${token}`;
     return config;
   },
   (error) => Promise.reject(error)
 );
 
-// silent refresh
+// Silent refresh on 401 (once)
 API.interceptors.response.use(
   (response) => response,
   async (error) => {
-    const originalRequest = error.config;
-    if (error.response?.status === 401 && !originalRequest._retry) {
+    const originalRequest = error?.config;
+    const status = error?.response?.status;
+
+    if (status === 401 && originalRequest && !originalRequest._retry) {
       originalRequest._retry = true;
       try {
         const refreshToken = localStorage.getItem('refreshToken');
         if (!refreshToken) throw new Error('no refresh token');
-        const { data } = await axios.post(
-          'http://127.0.0.1:8000/api/token/refresh/',
-          { refresh: refreshToken }
-        );
+
+        // Call refresh on the same base as the API instance
+        const refreshURL = `${API.defaults.baseURL.replace(/\/$/, '')}/token/refresh/`;
+        const { data } = await axios.post(refreshURL, { refresh: refreshToken });
+
         localStorage.setItem('accessToken', data.access);
         originalRequest.headers['Authorization'] = `Bearer ${data.access}`;
         return API(originalRequest); // replay the original request
@@ -38,13 +45,15 @@ API.interceptors.response.use(
         window.location.href = '/login';
       }
     }
+
     return Promise.reject(error);
   }
 );
 
+// Helpers
 export const uploadPaymentProof = (formData) => API.post('/payment-proofs/', formData);
-
 export const getPaymentProofs = (main_document) =>
   API.get(`/payment-proofs/?main_document=${main_document}`);
 
 export default API;
+

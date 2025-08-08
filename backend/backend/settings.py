@@ -6,8 +6,9 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = "django-insecure-s!!7+v-#(kl^j!q!koj45u1!n0i$_r@$r*mljhr!x4--a+2=n+"
-DEBUG = True
-ALLOWED_HOSTS = ["*"]
+DEBUG = False
+ALLOWED_HOSTS = ["staging.caw-dms.com","127.0.0.1","localhost"]
+CSRF_TRUSTED_ORIGINS = ["https://staging.caw-dms.com"]
 DATA_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024 
 X_FRAME_OPTIONS = 'ALLOWALL'
 XS_SHARING_ALLOWED_METHODS = ['POST', 'GET', 'OPTIONS', 'PUT', 'DELETE']
@@ -43,8 +44,11 @@ CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
 ]
 
-MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
-MEDIA_URL = '/media/'
+STATIC_URL = "/backend-static/"
+STATIC_ROOT = BASE_DIR / "staticfiles"
+
+MEDIA_URL = "/media/"
+MEDIA_ROOT = BASE_DIR / "media"
 
 ROOT_URLCONF = "backend.urls"
 
@@ -93,7 +97,6 @@ TIME_ZONE = "UTC"
 USE_I18N = True
 USE_TZ = True
 
-STATIC_URL = "/static/"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 REST_FRAMEWORK = {

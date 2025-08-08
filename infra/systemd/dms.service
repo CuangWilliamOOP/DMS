@@ -1,0 +1,16 @@
+[Unit]
+Description=DMS Django via Gunicorn
+After=network.target
+
+[Service]
+User=dms
+Group=www-data
+WorkingDirectory=/srv/dms/app/backend
+EnvironmentFile=/etc/dms.env
+ExecStart=/srv/dms/app/.venv/bin/gunicorn backend.wsgi:application \
+  --workers 3 --bind 127.0.0.1:8001 --access-logfile - --error-logfile -
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
