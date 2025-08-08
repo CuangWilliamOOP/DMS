@@ -10,3 +10,19 @@ node_modules/
 build/
 dist/
 .env.local
+
+# env & secrets
+.env
+*.env
+
+# sqlite & uploads
+backend/db.sqlite3
+backend/media/
+
+# frontend build
+dms-frontend/build/
+
+# Python cache & venv
+__pycache__/
+*.pyc
+.venv/
