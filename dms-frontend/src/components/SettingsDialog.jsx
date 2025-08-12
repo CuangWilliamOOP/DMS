@@ -29,8 +29,8 @@ import PersonIcon from "@mui/icons-material/Person";
 import NotificationsIcon from "@mui/icons-material/NotificationsActive";
 import LockIcon from "@mui/icons-material/Lock";
 import { motion } from "framer-motion";
-import { ColorModeContext } from "./theme/ColorModeProvider";
-import API from "./services/api";
+import { ColorModeContext } from "../theme/ColorModeProvider";
+import API from "../services/api";
 
 export default function PengaturanDialog({ open, onClose }) {
   const { mode, toggle: toggleMode } = useContext(ColorModeContext);
