@@ -1,4 +1,6 @@
-import React, { useState, useContext } from "react";
+// File: src/components/SettingsDialog.jsx
+
+import React, { useState, useContext, useEffect } from "react";
 import {
   Dialog,
   DialogTitle,
@@ -14,40 +16,63 @@ import {
   Typography,
   Box,
   FormControlLabel,
-  RadioGroup,
-  Radio,
-  FormControl,
-  FormLabel,
   Avatar,
   Collapse,
   MenuItem,
   Select,
   InputLabel,
+  FormControl,
 } from "@mui/material";
 import ChevronRightIcon from "@mui/icons-material/ChevronRight";
 import PaletteIcon from "@mui/icons-material/Palette";
 import PersonIcon from "@mui/icons-material/Person";
 import NotificationsIcon from "@mui/icons-material/NotificationsActive";
 import LockIcon from "@mui/icons-material/Lock";
-import LogoutIcon from "@mui/icons-material/Logout";
 import { motion } from "framer-motion";
-import { ColorModeContext } from "../theme/ColorModeProvider";
-import API from "../services/api";
+import { ColorModeContext } from "./theme/ColorModeProvider";
+import API from "./services/api";
 
 export default function PengaturanDialog({ open, onClose }) {
   const { mode, toggle: toggleMode } = useContext(ColorModeContext);
+
   const [notifEmail, setNotifEmail] = useState(
     localStorage.getItem("pref_notif_email") !== "false"
   );
-  const [autoLogout, setAutoLogout] = useState(
-    localStorage.getItem("pref_logout") || "30"
-  );
-  const [openSection, setOpenSection] = useState("appearance"); // "appearance", "notifications", "security"
 
-  const simpan = () => {
-    localStorage.setItem("pref_notif_email", notifEmail);
-    localStorage.setItem("pref_logout", autoLogout);
-    onClose();
+  // Lift idle timeout to parent so Save can persist it too
+  const [idle, setIdle] = useState(60);
+  const [loadingIdle, setLoadingIdle] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  const [openSection, setOpenSection] = useState("appearance"); // "appearance" | "notifications" | "security"
+
+  useEffect(() => {
+    // hydrate from backend
+    (async () => {
+      try {
+        const { data } = await API.get("/user-settings/");
+        if (typeof data?.idle_timeout === "number") setIdle(data.idle_timeout);
+      } catch (e) {
+        // ignore and keep default
+      } finally {
+        setLoadingIdle(false);
+      }
+    })();
+  }, []);
+
+  const simpan = async () => {
+    try {
+      setSaving(true);
+      await API.put("/user-settings/", {
+        idle_timeout: Number(idle),
+        theme_mode: mode, // persist current theme choice
+      });
+      localStorage.setItem("pref_notif_email", String(notifEmail)); // (kept local-only for now)
+      window.dispatchEvent(new Event("theme_update"));
+      onClose();
+    } finally {
+      setSaving(false);
+    }
   };
 
   // Animated icon wrapper
@@ -64,12 +89,6 @@ export default function PengaturanDialog({ open, onClose }) {
     </Avatar>
   );
 
-  // Section gradient backgrounds
-  const sectionBg = (light, dark) => (theme) =>
-    theme.palette.mode === "light"
-      ? light
-      : dark || theme.palette.background.paper;
-
   // Section toggler
   const handleSection = (s) => setOpenSection(openSection === s ? "" : s);
 
@@ -81,23 +100,28 @@ export default function PengaturanDialog({ open, onClose }) {
     { label: "Tidak pernah", value: 0 },
   ];
 
-  function KeamananTab() {
-    const [idle, setIdle] = React.useState(60);
-
-    React.useEffect(() => {
-      API.get("/user-settings/").then(({ data }) => setIdle(data.idle_timeout));
-    }, []);
-
-    const handleChange = (e) => {
-      const v = e.target.value;
-      setIdle(v);
-      API.put("/user-settings/", { idle_timeout: v });
+  function KeamananTab({ value, onChange }) {
+    // Keep Select in sync with backend immediately on change
+    const handleChange = async (e) => {
+      const v = Number(e.target.value);
+      onChange(v);
+      try {
+        await API.put("/user-settings/", { idle_timeout: v });
+      } catch (e) {
+        // swallow; Save will retry
+      }
     };
 
     return (
       <FormControl fullWidth sx={{ mt: 1 }}>
-        <InputLabel>Auto-logout</InputLabel>
-        <Select value={idle} label="Auto-logout" onChange={handleChange}>
+        <InputLabel id="idle-timeout-label">Auto-logout</InputLabel>
+        <Select
+          labelId="idle-timeout-label"
+          value={value}
+          label="Auto-logout"
+          onChange={handleChange}
+          disabled={loadingIdle}
+        >
           {options.map((o) => (
             <MenuItem key={o.value} value={o.value}>
               {o.label}
@@ -120,7 +144,7 @@ export default function PengaturanDialog({ open, onClose }) {
           backdropFilter: "blur(13px) saturate(160%)",
           background:
             theme.palette.mode === "dark"
-              ? "linear-gradient(140deg, rgba(35,48,90,0.97) 70%, rgba(60,44,84,0.94) 100%)"
+              ? "linear-gradient(140deg, rgba(15,17,26,0.96) 70%, rgba(27,34,64,0.94) 100%)"
               : "linear-gradient(150deg, rgba(255,255,255,0.90) 50%, rgba(224,224,255,0.75) 100%)",
           boxShadow: "0 10px 36px 0 rgba(34,50,84,0.16)",
         }),
@@ -165,15 +189,16 @@ export default function PengaturanDialog({ open, onClose }) {
         sx={{
           p: 0,
           background: (theme) =>
-            theme.palette.mode === "dark"
-              ? "rgba(40,34,60,0.90)"
-              : "transparent",
+            theme.palette.mode === "dark" ? "#0f111a" : "transparent",
         }}
       >
-        {/* ============ TAMPILAN ============ */}
         <List disablePadding>
+          {/* ============ TAMPILAN ============ */}
           <ListItemButton
             onClick={() => handleSection("appearance")}
+            aria-expanded={openSection === "appearance"}
+            aria-controls="section-appearance"
+            id="btn-appearance"
             sx={{
               bgcolor: (theme) =>
                 openSection === "appearance"
@@ -197,7 +222,13 @@ export default function PengaturanDialog({ open, onClose }) {
               }}
             />
           </ListItemButton>
-          <Collapse in={openSection === "appearance"} timeout="auto" unmountOnExit>
+          <Collapse
+            in={openSection === "appearance"}
+            timeout="auto"
+            unmountOnExit
+            id="section-appearance"
+            aria-labelledby="btn-appearance"
+          >
             <Box sx={{ pl: 8, py: 1.5 }}>
               <FormControlLabel
                 control={
@@ -205,8 +236,8 @@ export default function PengaturanDialog({ open, onClose }) {
                     color="primary"
                     checked={mode === "dark"}
                     onChange={(e) => {
-                      console.log('Theme toggle fired:', e.target.checked);
-                      toggleMode(e.target.checked);
+                      const nextMode = e.target.checked ? "dark" : "light";
+                      toggleMode(nextMode);
                     }}
                   />
                 }
@@ -214,11 +245,15 @@ export default function PengaturanDialog({ open, onClose }) {
               />
             </Box>
           </Collapse>
+
           <Divider variant="inset" />
 
           {/* ============ NOTIFIKASI ============ */}
           <ListItemButton
             onClick={() => handleSection("notifications")}
+            aria-expanded={openSection === "notifications"}
+            aria-controls="section-notifications"
+            id="btn-notifications"
             sx={{
               bgcolor: (theme) =>
                 openSection === "notifications"
@@ -239,7 +274,13 @@ export default function PengaturanDialog({ open, onClose }) {
               }}
             />
           </ListItemButton>
-          <Collapse in={openSection === "notifications"} timeout="auto" unmountOnExit>
+          <Collapse
+            in={openSection === "notifications"}
+            timeout="auto"
+            unmountOnExit
+            id="section-notifications"
+            aria-labelledby="btn-notifications"
+          >
             <Box sx={{ pl: 8, py: 1.5 }}>
               <FormControlLabel
                 control={
@@ -253,11 +294,15 @@ export default function PengaturanDialog({ open, onClose }) {
               />
             </Box>
           </Collapse>
+
           <Divider variant="inset" />
 
           {/* ============ KEAMANAN ============ */}
           <ListItemButton
             onClick={() => handleSection("security")}
+            aria-expanded={openSection === "security"}
+            aria-controls="section-security"
+            id="btn-security"
             sx={{
               bgcolor: (theme) =>
                 openSection === "security"
@@ -268,7 +313,7 @@ export default function PengaturanDialog({ open, onClose }) {
             }}
           >
             <ListItemIcon>
-              <ColoredIcon icon={<LogoutIcon />} color="#2e7d32" />
+              <ColoredIcon icon={<LockIcon />} color="#2e7d32" />
             </ListItemIcon>
             <ListItemText primary="Keamanan" secondary="Auto logout" />
             <ChevronRightIcon
@@ -278,31 +323,15 @@ export default function PengaturanDialog({ open, onClose }) {
               }}
             />
           </ListItemButton>
-          <Collapse in={openSection === "security"} timeout="auto" unmountOnExit>
-            <Box sx={{ pl: 8, py: 1.5 }}>
-              <FormControl component="fieldset">
-                <FormLabel
-                  component="legend"
-                  sx={{ fontSize: 13, color: "text.secondary", mb: 0.5 }}
-                >
-                  Auto-logout (menit tanpa aktivitas)
-                </FormLabel>
-                <RadioGroup
-                  row
-                  value={autoLogout}
-                  onChange={(e) => setAutoLogout(e.target.value)}
-                >
-                  {["15", "30", "60", "never"].map((v) => (
-                    <FormControlLabel
-                      key={v}
-                      value={v}
-                      control={<Radio size="small" />}
-                      label={v === "never" ? "Tidak" : v}
-                    />
-                  ))}
-                </RadioGroup>
-              </FormControl>
-              <KeamananTab />
+          <Collapse
+            in={openSection === "security"}
+            timeout="auto"
+            unmountOnExit
+            id="section-security"
+            aria-labelledby="btn-security"
+          >
+            <Box sx={{ pl: 8, py: 1.5, pr: 3 }}>
+              <KeamananTab value={idle} onChange={setIdle} />
             </Box>
           </Collapse>
         </List>
@@ -310,23 +339,20 @@ export default function PengaturanDialog({ open, onClose }) {
 
       {/* ————————————————— FOOTER ————————————————— */}
       <DialogActions sx={{ px: 3, py: 2 }}>
-        <Button
-          onClick={onClose}
-          variant="outlined"
-          sx={{ textTransform: "none", borderRadius: 2 }}
-        >
+        <Button onClick={onClose} variant="outlined" sx={{ textTransform: "none", borderRadius: 2 }}>
           Batal
         </Button>
         <Button
           onClick={simpan}
           variant="contained"
+          disabled={saving}
           sx={{
             textTransform: "none",
             borderRadius: 2,
             background: "linear-gradient(90deg, #1976d2, #7e57c2)",
           }}
         >
-          Simpan
+          {saving ? "Menyimpan…" : "Simpan"}
         </Button>
       </DialogActions>
     </Dialog>
