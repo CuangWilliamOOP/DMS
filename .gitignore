@@ -26,3 +26,5 @@ dms-frontend/build/
 __pycache__/
 *.pyc
 .venv/
+*.sqlite3
+backend/settings.sqlite.py.bak
