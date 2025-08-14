@@ -1,22 +1,51 @@
 # File: backend/settings.py
 
 import os
+from datetime import timedelta
 from pathlib import Path
 
 # --- Base ---
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-# SECURITY
-# (Keeping your current key/flags as in staging)
-SECRET_KEY = "django-insecure-s!!7+v-#(kl^j!q!koj45u1!n0i$_r@$r*mljhr!x4--a+2=n+"
-DEBUG = False
-ALLOWED_HOSTS = ["staging.caw-dms.com", "127.0.0.1", "localhost"]
-CSRF_TRUSTED_ORIGINS = ["https://staging.caw-dms.com"]
+# --- Security / Env-driven ---
+# Set DJANGO_SECRET_KEY in /etc/dms.env. The fallback keeps staging alive until you add it.
+SECRET_KEY = os.environ.get(
+    "DJANGO_SECRET_KEY"
+)
 
-# Upload / framing relaxations you already had
+DEBUG = False
+
+# Make hosts & CSRF origins configurable via env (comma-separated).
+ALLOWED_HOSTS = [h.strip() for h in os.environ.get(
+    "DJANGO_ALLOWED_HOSTS", "staging.caw-dms.com,127.0.0.1,localhost"
+).split(",") if h.strip()]
+
+CSRF_TRUSTED_ORIGINS = [o.strip() for o in os.environ.get(
+    "DJANGO_CSRF_TRUSTED_ORIGINS", "https://staging.caw-dms.com"
+).split(",") if o.strip()]
+
+# Upload limit
 DATA_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024  # 10 MB
-X_FRAME_OPTIONS = "ALLOWALL"
-XS_SHARING_ALLOWED_METHODS = ["POST", "GET", "OPTIONS", "PUT", "DELETE"]
+
+# Harden framing (used to be ALLOWALL)
+X_FRAME_OPTIONS = "SAMEORIGIN"
+
+# --- Security Headers / HTTPS (behind Nginx) ---
+SECURE_SSL_REDIRECT = True
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+
+SESSION_COOKIE_SECURE = True
+CSRF_COOKIE_SECURE = True
+SESSION_COOKIE_SAMESITE = "Lax"
+CSRF_COOKIE_SAMESITE = "Lax"
+
+# Start with 14d HSTS on staging; bump later in prod
+SECURE_HSTS_SECONDS = int(os.environ.get("DJANGO_HSTS_SECONDS", "1209600"))
+SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+SECURE_HSTS_PRELOAD = False
+
+SECURE_CONTENT_TYPE_NOSNIFF = True
+SECURE_REFERRER_POLICY = "strict-origin-when-cross-origin"
 
 # --- Applications ---
 INSTALLED_APPS = [
@@ -32,7 +61,7 @@ INSTALLED_APPS = [
     "rest_framework",
 
     # Local apps
-    "documents",  # your app (models live under backend/documents/)
+    "documents",
 ]
 
 MIDDLEWARE = [
@@ -66,7 +95,7 @@ TEMPLATES = [
 WSGI_APPLICATION = "backend.wsgi.application"
 
 # --- Database (Supabase Postgres via environment) ---
-# Put these in /etc/dms.env (already done):
+# Put these in /etc/dms.env:
 # DB_NAME=postgres
 # DB_USER=postgres
 # DB_PASSWORD=********
@@ -108,9 +137,32 @@ MEDIA_ROOT = BASE_DIR / "media"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-# --- DRF / Auth ---
+# --- DRF / Auth / Throttling ---
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
         "rest_framework_simplejwt.authentication.JWTAuthentication",
-    )
+    ),
+    "DEFAULT_THROTTLE_CLASSES": [
+        "rest_framework.throttling.AnonRateThrottle",
+        "rest_framework.throttling.UserRateThrottle",
+    ],
+    "DEFAULT_THROTTLE_RATES": {
+        "anon": "50/min",
+        "user": "200/min",
+    },
+}
+
+SIMPLE_JWT = {
+    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=30),
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
+    "ROTATE_REFRESH_TOKENS": False,
+    "BLACKLIST_AFTER_ROTATION": False,
+}
+
+# --- Logging (to systemd journal) ---
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "handlers": {"console": {"class": "logging.StreamHandler"}},
+    "root": {"handlers": ["console"], "level": "INFO"},
 }
