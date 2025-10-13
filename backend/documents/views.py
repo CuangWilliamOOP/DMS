@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 PROGRESS: dict[str, dict] = {}
 PROGRESS_LOCK = threading.Lock()
 
-def progress_update(job_id: str | None, percent: int, stage: str = "", detail: str | None = None):
+def progress_update(job_id: str | None, percent: int, stage: str = "", **extra):
     if not job_id:
         return
     p = max(0, min(100, int(percent)))
@@ -44,8 +44,8 @@ def progress_update(job_id: str | None, percent: int, stage: str = "", detail: s
             "job_id": job_id,
             "percent": p,
             "stage": stage,
-            "detail": detail,
             "updated_at": timezone.now().isoformat(),
+            **extra,  # mode, total_items, current_item, etc.
         }
 
 @api_view(["GET"])
@@ -414,6 +414,7 @@ def _row_ctx(parsed):
 
 
 @api_view(["POST"])
+@permission_classes([IsAuthenticated])
 # REPLACED: multi-page parse + auto attachment of remaining pages
 def parse_and_store_view(request):
     job_id = request.headers.get("X-Job-ID")  # client-generated UUID
@@ -432,20 +433,20 @@ def parse_and_store_view(request):
         for c in up.chunks():
             tmp.write(c)
         tmp_path = tmp.name
-    progress_update(job_id, 10, "Unggahan diterima")
+    progress_update(job_id, 2, "Unggahan diterima")
 
     parsed, table_pages = [], 1
     pdf = None
 
     if ext == ".pdf":
         pdf = fitz.open(tmp_path)
-        progress_update(job_id, 20, "Membaca halaman 1")
+        progress_update(job_id, 5, "Membaca halaman 1")
         p1_png = _save_page_image(pdf, 0)
         _gptp.install_progress(lambda pct, stage: progress_update(job_id, pct, stage))
         p1 = gpt_parse_subsections_from_image(p1_png) or []
         _gptp.install_progress(None)
         os.remove(p1_png)
-        progress_update(job_id, 30, "Halaman 1 selesai")
+        progress_update(job_id, 10, "Halaman 1 selesai")
         # New strict handling for page-2
         p2 = []
         table_pages = 1
@@ -466,17 +467,15 @@ def parse_and_store_view(request):
                     os.remove(p2_png)
                 except Exception:
                     pass
-        progress_update(job_id, 40, "Ekstraksi tabel")
+        progress_update(job_id, 15, "Ekstraksi tabel")
         parsed = p1 + p2 if table_pages == 2 else p1
         parsed = _strip_grand_totals(parsed)
-        progress_update(job_id, 55, "Tabel siap")
     else:
-        progress_update(job_id, 20, "Membaca gambar")
+        progress_update(job_id, 5, "Membaca gambar")
         _gptp.install_progress(lambda pct, stage: progress_update(job_id, pct, stage))
         parsed = gpt_parse_subsections_from_image(tmp_path) or []
         _gptp.install_progress(None)
         table_pages = 1
-        progress_update(job_id, 55, "Tabel siap")
 
     # Inject REF_CODE post-merge
     used_codes = set()
@@ -493,7 +492,22 @@ def parse_and_store_view(request):
                 used_codes.add(ref)
                 row.append(ref)
 
-    progress_update(job_id, 96, "Menyimpan ke basis data")
+    # Detect mode and publish item counts (after items built)
+    up = request.FILES.get("file")
+    ext_name = (up.name.rsplit(".", 1)[-1].lower() if up and "." in up.name else "")
+    TABLE_EXTS = {"csv", "tsv", "xlsx", "xls", "json"}
+    mode = "table_only" if ext_name in TABLE_EXTS else "pdf"
+    items_ctx = _row_ctx(parsed)
+    total_items = len(items_ctx)
+    progress_update(
+        job_id,
+        20,
+        "Tabel selesai & items terbentuk",
+        mode=mode,
+        total_items=total_items,
+        current_item=0,
+    )
+
     doc = Document.objects.create(
         title=title,
         company=company,
@@ -504,12 +518,40 @@ def parse_and_store_view(request):
     )
 
     attached = 0
+    # If table-only (no supporting docs phase), finish cleanly after saving items
+    if mode == "table_only" or total_items == 0:
+        os.remove(tmp_path)
+        progress_update(
+            job_id,
+            96,
+            "Menyimpan ke basis data",
+            mode=mode,
+            total_items=total_items,
+            current_item=total_items,
+        )
+        progress_update(
+            job_id,
+            100,
+            "Selesai (tanpa dokumen pendukung)",
+            mode=mode,
+            total_items=total_items,
+            current_item=total_items,
+        )
+        with PROGRESS_LOCK:
+            PROGRESS.pop(job_id, None)
+        return JsonResponse({
+            "document_id": doc.id,
+            "document_code": doc.document_code,
+            "attached_pages": attached,
+            "table_pages": table_pages,
+        }, status=201)
     if pdf and pdf.page_count > table_pages:
         ctx = _row_ctx(parsed)
         if ctx:
+            total_items = len(ctx)
+            current_ref = None
             ptr = 0
             seq = {c["ref_code"]: 0 for c in ctx}
-            total = max(pdf.page_count - table_pages, 0)
             for i, p in enumerate(range(table_pages, pdf.page_count), 1):
                 page_pdf = _save_single_page_pdf(pdf, p)
                 page_png = _save_page_image(pdf, p)
@@ -519,12 +561,28 @@ def parse_and_store_view(request):
                     next_row=ctx[ptr + 1] if ptr + 1 < len(ctx) else None,
                 )
                 stay = bool(decision.get("stay", True))
-                conf = float(decision.get("confidence", 0.0))
-                LOW = 0.55
                 if not stay and ptr + 1 < len(ctx):
                     ptr += 1
                 cur = ctx[ptr]
-                ref = cur["ref_code"]; seq[ref] += 1
+                ref = cur["ref_code"]
+
+                # 🔔 bump when starting a new item
+                if ref != current_ref:
+                    item_idx = ptr  # 0-based
+                    pct = 20 + int(80 * item_idx / max(1, total_items))
+                    progress_update(
+                        job_id,
+                        pct,
+                        f"Mulai isi dokumen pendukung: item {item_idx+1}/{total_items}",
+                        mode=mode,
+                        total_items=total_items,
+                        current_item=item_idx + 1,
+                    )
+                    current_ref = ref
+
+                seq[ref] += 1
+                conf = float(decision.get("confidence", 0.0))
+                LOW = 0.55
                 title_i = f"Lampiran {ref} #{seq[ref]}"
                 with open(page_pdf, "rb") as fp:
                     sdoc = SupportingDocument(
@@ -560,12 +618,14 @@ def parse_and_store_view(request):
                         pass
                 os.remove(page_pdf)
                 attached += 1
-                if total:
-                    progress_update(job_id, 55 + int(40 * i / total), f"Memecah dokumen ({i}/{total})")
+                # ⛔ removed old page-based progress updates
         pdf.close()
 
     os.remove(tmp_path)
+    progress_update(job_id, 96, "Menyimpan ke basis data")
     progress_update(job_id, 100, "Selesai")
+    with PROGRESS_LOCK:
+        PROGRESS.pop(job_id, None)
     return JsonResponse({
         "document_id": doc.id,
         "document_code": doc.document_code,

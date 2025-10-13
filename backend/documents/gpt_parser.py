@@ -69,7 +69,7 @@ def get_client() -> OpenAI:
 
 
 def gpt_parse_subsections_from_image(image_path: str):
-    _tick(20, "Vision: klasifikasi halaman")
+    _tick(5, "Membaca tabel")
     b64_image = encode_image(image_path)
 
     prompt = """
@@ -139,7 +139,7 @@ Return strictly valid JSON with no extra text, exactly in this structure:
 
     try:
         out = json.loads(cleaned_json_str)
-        _tick(30, "Vision: selesai halaman")
+        _tick(15, "Membersihkan hasil")
         return out
     except json.JSONDecodeError:
         # Return empty list on parse failures to avoid crashing callers

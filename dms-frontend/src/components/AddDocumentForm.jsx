@@ -115,7 +115,10 @@ function AddDocumentForm() {
       try {
         const { data } = await API.get(`/progress/${id}/`);
         if (typeof data.percent === 'number') setPercent((p) => Math.max(p, data.percent));
-        if (data.stage) setStage(data.stage);
+        const countLabel = (data.total_items != null)
+          ? ` — ${data.current_item ?? 0}/${data.total_items} item`
+          : '';
+        if (data.stage) setStage(`${data.stage}${countLabel}`);
         if ((data.percent || 0) >= 100) {
           clearInterval(pollRef.current);
           pollRef.current = null;
@@ -154,11 +157,9 @@ function AddDocumentForm() {
       const response = await API.post('/parse-and-store/', formData, {
         headers: { 'Content-Type': 'multipart/form-data', 'X-Job-ID': id },
         onUploadProgress: (evt) => {
-          if (!evt.total) return;
-          const uploadPct = Math.round((evt.loaded * 100) / evt.total);
-          const overall = Math.min(50, Math.floor(uploadPct * 0.5));
-          setPercent((p) => Math.max(p, overall));
-          setStage('Mengunggah berkas');
+          const u = evt.total ? Math.round((evt.loaded * 100) / evt.total) : null;
+          setStage(u != null ? `Mengunggah berkas (${u}%)` : 'Mengunggah berkas');
+          // do not call setPercent() here; server drives %
         },
       });
 
