@@ -2,6 +2,7 @@ import io
 import os
 import tempfile
 import logging
+import threading
 
 import fitz
 from PIL import Image, ImageDraw, ImageFont
@@ -18,6 +19,7 @@ from rest_framework.response import Response
 from rest_framework.exceptions import PermissionDenied
 
 from .gpt_parser import gpt_parse_subsections_from_image, gpt_belongs_to_current
+from . import gpt_parser as _gptp
 from .models import Document, SupportingDocument, UserSettings, PaymentProof
 from .serializers import (
     DocumentSerializer,
@@ -29,6 +31,31 @@ from .utils import generate_unique_item_ref_code, recalc_totals
 
 logger = logging.getLogger(__name__)
 
+# === simple in-memory progress store ===
+PROGRESS: dict[str, dict] = {}
+PROGRESS_LOCK = threading.Lock()
+
+def progress_update(job_id: str | None, percent: int, stage: str = "", detail: str | None = None):
+    if not job_id:
+        return
+    p = max(0, min(100, int(percent)))
+    with PROGRESS_LOCK:
+        PROGRESS[job_id] = {
+            "job_id": job_id,
+            "percent": p,
+            "stage": stage,
+            "detail": detail,
+            "updated_at": timezone.now().isoformat(),
+        }
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def progress_view(request, job_id: str):
+    with PROGRESS_LOCK:
+        data = PROGRESS.get(job_id)
+    if not data:
+        return JsonResponse({"job_id": job_id, "percent": 0, "stage": "pending"})
+    return JsonResponse(data)
 
 class DocumentViewSet(viewsets.ModelViewSet):
     queryset = Document.objects.all().order_by("-created_at")
@@ -389,8 +416,11 @@ def _row_ctx(parsed):
 @api_view(["POST"])
 # REPLACED: multi-page parse + auto attachment of remaining pages
 def parse_and_store_view(request):
+    job_id = request.headers.get("X-Job-ID")  # client-generated UUID
+    progress_update(job_id, 1, "Menyiapkan unggahan")
     up = request.FILES.get("file")
     if not up:
+        progress_update(job_id, 100, "Gagal: tidak ada file")
         return JsonResponse({"error": "No file uploaded"}, status=400)
 
     title   = request.data.get("title", "Untitled Document")
@@ -402,15 +432,20 @@ def parse_and_store_view(request):
         for c in up.chunks():
             tmp.write(c)
         tmp_path = tmp.name
+    progress_update(job_id, 10, "Unggahan diterima")
 
     parsed, table_pages = [], 1
     pdf = None
 
     if ext == ".pdf":
         pdf = fitz.open(tmp_path)
+        progress_update(job_id, 20, "Membaca halaman 1")
         p1_png = _save_page_image(pdf, 0)
+        _gptp.install_progress(lambda pct, stage: progress_update(job_id, pct, stage))
         p1 = gpt_parse_subsections_from_image(p1_png) or []
+        _gptp.install_progress(None)
         os.remove(p1_png)
+        progress_update(job_id, 30, "Halaman 1 selesai")
         # New strict handling for page-2
         p2 = []
         table_pages = 1
@@ -422,18 +457,26 @@ def parse_and_store_view(request):
                     from .gpt_parser import gpt_is_rekap_table_page
                     dec = gpt_is_rekap_table_page(p2_png)
                     if dec.get("is_rekap", False):
+                        _gptp.install_progress(lambda pct, stage: progress_update(job_id, pct, stage))
                         p2 = gpt_parse_subsections_from_image(p2_png) or []
+                        _gptp.install_progress(None)
                         table_pages = 2
             finally:
                 try:
                     os.remove(p2_png)
                 except Exception:
                     pass
+        progress_update(job_id, 40, "Ekstraksi tabel")
         parsed = p1 + p2 if table_pages == 2 else p1
         parsed = _strip_grand_totals(parsed)
+        progress_update(job_id, 55, "Tabel siap")
     else:
+        progress_update(job_id, 20, "Membaca gambar")
+        _gptp.install_progress(lambda pct, stage: progress_update(job_id, pct, stage))
         parsed = gpt_parse_subsections_from_image(tmp_path) or []
+        _gptp.install_progress(None)
         table_pages = 1
+        progress_update(job_id, 55, "Tabel siap")
 
     # Inject REF_CODE post-merge
     used_codes = set()
@@ -450,6 +493,7 @@ def parse_and_store_view(request):
                 used_codes.add(ref)
                 row.append(ref)
 
+    progress_update(job_id, 96, "Menyimpan ke basis data")
     doc = Document.objects.create(
         title=title,
         company=company,
@@ -465,7 +509,8 @@ def parse_and_store_view(request):
         if ctx:
             ptr = 0
             seq = {c["ref_code"]: 0 for c in ctx}
-            for p in range(table_pages, pdf.page_count):
+            total = max(pdf.page_count - table_pages, 0)
+            for i, p in enumerate(range(table_pages, pdf.page_count), 1):
                 page_pdf = _save_single_page_pdf(pdf, p)
                 page_png = _save_page_image(pdf, p)
                 decision = gpt_belongs_to_current(
@@ -515,9 +560,12 @@ def parse_and_store_view(request):
                         pass
                 os.remove(page_pdf)
                 attached += 1
+                if total:
+                    progress_update(job_id, 55 + int(40 * i / total), f"Memecah dokumen ({i}/{total})")
         pdf.close()
 
     os.remove(tmp_path)
+    progress_update(job_id, 100, "Selesai")
     return JsonResponse({
         "document_id": doc.id,
         "document_code": doc.document_code,

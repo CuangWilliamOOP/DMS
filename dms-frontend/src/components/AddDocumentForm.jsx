@@ -1,6 +1,7 @@
 import React, { useState, useCallback } from 'react';
 import { useDropzone } from 'react-dropzone';
 import {
+  Backdrop,
   Box,
   TextField,
   FormControl,
@@ -55,6 +56,13 @@ function AddDocumentForm() {
   // Submission/loading state
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // Progress polling state
+  const [jobId, setJobId] = useState(null);
+  const [progressOpen, setProgressOpen] = useState(false);
+  const [percent, setPercent] = useState(0);
+  const [stage, setStage] = useState('Menyiapkan');
+  const pollRef = React.useRef(null);
+
   // Snackbar state (for success/error messages)
   const [snackbarOpen, setSnackbarOpen] = useState(false);
   const [snackbarMessage, setSnackbarMessage] = useState('');
@@ -100,6 +108,28 @@ function AddDocumentForm() {
     setSnackbarOpen(false);
   };
 
+  // Start/stop polling helper
+  const startPolling = (id) => {
+    if (pollRef.current) return;
+    pollRef.current = setInterval(async () => {
+      try {
+        const { data } = await API.get(`/progress/${id}/`);
+        if (typeof data.percent === 'number') setPercent((p) => Math.max(p, data.percent));
+        if (data.stage) setStage(data.stage);
+        if ((data.percent || 0) >= 100) {
+          clearInterval(pollRef.current);
+          pollRef.current = null;
+        }
+      } catch {
+        // ignore polling errors
+      }
+    }, 600);
+  };
+
+  React.useEffect(() => () => {
+    if (pollRef.current) clearInterval(pollRef.current);
+  }, []);
+
   // Form submission
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -114,8 +144,22 @@ function AddDocumentForm() {
     if (file) formData.append('file', file);
 
     try {
+      const id = crypto.randomUUID();
+      setJobId(id);
+      setProgressOpen(true);
+      setPercent(1);
+      setStage('Mengunggah berkas');
+      startPolling(id);
+
       const response = await API.post('/parse-and-store/', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
+        headers: { 'Content-Type': 'multipart/form-data', 'X-Job-ID': id },
+        onUploadProgress: (evt) => {
+          if (!evt.total) return;
+          const uploadPct = Math.round((evt.loaded * 100) / evt.total);
+          const overall = Math.min(50, Math.floor(uploadPct * 0.5));
+          setPercent((p) => Math.max(p, overall));
+          setStage('Mengunggah berkas');
+        },
       });
 
       // On success:
@@ -123,7 +167,10 @@ function AddDocumentForm() {
       setSnackbarSeverity('success');
       setSnackbarOpen(true);
 
-      // Navigate after a brief delay so user sees the snackbar
+  // Navigate after a brief delay so user sees the snackbar
+  setPercent(100);
+  setStage('Selesai');
+  setTimeout(() => setProgressOpen(false), 800);
       setTimeout(() => {
         navigate('/home');
       }, 1500);
@@ -134,6 +181,12 @@ function AddDocumentForm() {
       setSnackbarMessage('Gagal mengunggah dan memproses dokumen.');
       setSnackbarSeverity('error');
       setSnackbarOpen(true);
+      // Clear poller on failure to avoid stray interval
+      if (pollRef.current) {
+        clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
+  setProgressOpen(false);
 
     } finally {
       setIsSubmitting(false);
@@ -336,7 +389,7 @@ function AddDocumentForm() {
               Proses GPT Vision
             </Button>
           </Box>
-          {isSubmitting && (
+          {isSubmitting && !progressOpen && (
             <Box
               sx={{
                 position: 'absolute',
@@ -358,6 +411,30 @@ function AddDocumentForm() {
           )}
         </Paper>
       </motion.div>
+      {/* Progress overlay */}
+      <Backdrop
+        open={progressOpen}
+        sx={{ color: '#fff', zIndex: (t) => t.zIndex.drawer + 2, flexDirection: 'column' }}
+      >
+        <Box position="relative" display="inline-flex">
+          <CircularProgress variant="determinate" value={Math.min(100, percent)} size={96} thickness={4} />
+          <Box
+            sx={{
+              top: 0,
+              left: 0,
+              bottom: 0,
+              right: 0,
+              position: 'absolute',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            <Typography variant="subtitle1">{Math.max(0, Math.min(100, Math.round(percent)))}%</Typography>
+          </Box>
+        </Box>
+        <Typography sx={{ mt: 2 }}>{stage}</Typography>
+      </Backdrop>
       {/* Snackbar for success/error messages */}
       <Snackbar
         open={snackbarOpen}
