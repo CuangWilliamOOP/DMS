@@ -101,26 +101,13 @@ export default function CompanyDirectoryPage() {
 
   return (
     <>
-      {/* Full-page background */}
-      <Box
-        sx={{
-          position: 'fixed',
-          zIndex: -1,
-          top: 0,
-          left: 0,
-          width: '100vw',
-          height: '100vh',
-          background: bgColor,
-          transition: 'background 0.3s',
-        }}
-      />
-
+      
       <Box
         sx={{
           minHeight: '100vh',
           px: { xs: 1, sm: 3, md: 6 },
           py: { xs: 3, sm: 6 },
-          mt: -10,
+          mt: 0,
           position: 'relative',
         }}
       >

@@ -127,3 +127,116 @@ Return strictly valid JSON with no extra text, exactly in this structure:
         # Return empty list on parse failures to avoid crashing callers
         return []
 
+
+def gpt_belongs_to_current(image_path: str, current_row: dict, next_row: dict | None) -> dict:
+    """
+    Decide whether this supporting page should stay with the current row or advance to the next.
+    Returns: {"stay": bool, "confidence": float in [0,1]}
+    Notes:
+      - No OCR text is persisted; only a decision is returned.
+      - Prefer staying on current row unless evidence strongly favors advancing.
+      - If next_row is None, always stay.
+    """
+    # If there is no next row, we must stay
+    if not next_row:
+        return {"stay": True, "confidence": 1.0}
+
+    # Compose minimal, transient context
+    def _join(x):  # short, single-line hints
+        try:
+            cells = [str(c) for c in x.get("cells", []) if str(c).strip()]
+            s = " | ".join(cells)
+            return s[:320]
+        except Exception:
+            return ""
+
+    current_hint = _join(current_row)
+    next_hint = _join(next_row)
+
+    b64_image = encode_image(image_path)
+    model = os.getenv("OPENAI_MODEL", "gpt-4o")
+    client = get_client()
+
+    sys_prompt = (
+        "You classify a single supporting page image for a multi-item payment packet. "
+        "Choose whether the page belongs to the CURRENT row or indicates ADVANCE to the NEXT row. "
+        "Rules: stay with CURRENT for consecutive pages of the same item; only advance when cues clearly match the NEXT row. "
+        "Cues include vendor/recipient, description, invoice/plate numbers, dates, bank names, totals. "
+        "Return strict JSON: {\"stay\": true|false, \"confidence\": number between 0 and 1}. No extra text."
+    )
+
+    user_text = (
+        "CURRENT_ROW HINT:\n" f"{current_hint}\n\n" "NEXT_ROW HINT:\n" f"{next_hint}\n"
+    )
+
+    try:
+        resp = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": sys_prompt},
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": user_text},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:image/jpeg;base64,{b64_image}", "detail": "auto"},
+                        },
+                    ],
+                },
+            ],
+            max_tokens=60,
+            temperature=0.0,
+        )
+        content = resp.choices[0].message.content.strip()
+        payload_str = extract_json_from_markdown(content)
+        data = json.loads(payload_str)
+        stay = bool(data.get("stay", True))
+        conf = float(data.get("confidence", 0.0))
+        if conf < 0.0:
+            conf = 0.0
+        if conf > 1.0:
+            conf = 1.0
+        return {"stay": stay, "confidence": conf}
+    except Exception:
+        return {"stay": True, "confidence": 0.0}
+
+
+def gpt_is_rekap_table_page(image_path: str) -> dict:
+    """
+    Return {"is_rekap": bool, "confidence": 0..1}.
+    Classifies whether the page is a REKAP table page with columns:
+    No | KETERANGAN | DIBAYAR KE | BANK | PENGIRIMAN, occupying most of the page.
+    """
+    b64 = encode_image(image_path)
+    client = get_client()
+    model = os.getenv("OPENAI_MODEL", "gpt-4o")
+    sys = (
+        "Decide if this single page is a structured REKAP PEMBAYARAN table "
+        "with header exactly: No, KETERANGAN, DIBAYAR KE, BANK, PENGIRIMAN, "
+        "occupying most of the page. Return JSON {\"is_rekap\": true|false, \"confidence\": 0..1}."
+    )
+    try:
+        resp = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": sys},
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}", "detail": "auto"}},
+                    ],
+                },
+            ],
+            max_tokens=50,
+            temperature=0.0,
+        )
+        payload = extract_json_from_markdown(resp.choices[0].message.content.strip())
+        out = json.loads(payload)
+        return {
+            "is_rekap": bool(out.get("is_rekap", False)),
+            "confidence": float(out.get("confidence", 0.0)),
+        }
+    except Exception:
+        return {"is_rekap": False, "confidence": 0.0}
+

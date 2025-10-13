@@ -58,18 +58,8 @@ function DirectoryPage() {
 
   return (
     <>
-      {/* Fixed background to keep strong black contrast in dark mode */}
-      <Box
-        sx={{
-          position: 'fixed',
-          zIndex: -1,
-          inset: 0,
-          background: isDark ? '#181a29' : '#eaf2ff',
-          transition: 'background .3s',
-        }}
-      />
-
-      <Box sx={{ flexGrow: 1, px: { xs: 2, sm: 4 }, pb: 4, pt: -2, mt: -8 }}>
+      
+  <Box sx={{ flexGrow: 1, px: { xs: 2, sm: 4 }, pb: 4, pt: 0, mt: 0 }}>
         <Typography variant="h4" sx={{ fontWeight: 'bold', mb: 3 }}>
           Direktori Dokumen
         </Typography>

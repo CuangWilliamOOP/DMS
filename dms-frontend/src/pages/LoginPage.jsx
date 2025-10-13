@@ -39,9 +39,10 @@ export default function LoginPage() {
       else if (res2.data.groups.includes('boss')) role = 'higher-up';
       else if (res2.data.groups.includes('admin')) role = 'employee';
 
-      localStorage.setItem('role', role);
-      window.dispatchEvent(new Event("theme_update"));
-      navigate('/home');
+  localStorage.setItem('role', role);
+  window.dispatchEvent(new Event("theme_update"));
+  // Hard reload with cache-busting query to ensure latest bundle is used post-login
+  window.location.replace(`/home?v=${Date.now()}`);
     } catch (err) {
       alert('Username atau password salah!');
     }

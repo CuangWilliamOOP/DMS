@@ -142,7 +142,7 @@ export function ItemDocsPreview({
 
   // helpers
   const getExt = (name = '') => name.split('.').pop().toLowerCase();
-  const renderFilePreview = (url) => {
+  const renderFilePreview = (url, doc) => {
     if (!url) return <Typography>Tidak ada file.</Typography>;
     const ext = getExt(url);
     if (['png', 'jpg', 'jpeg'].includes(ext)) {
@@ -158,6 +158,19 @@ export function ItemDocsPreview({
         </Box>
       );
     }
+    // Prefer server preview if present (works on phones)
+    const preview = doc?.preview_image;
+    if (preview)
+      return (
+        <Box sx={{ textAlign: 'center' }}>
+          <img src={preview} alt="Preview" style={{ maxWidth: '100%', maxHeight: 450 }} />
+          <Box sx={{ mt: 1 }}>
+            <Button size="small" href={doc.file} target="_blank" rel="noreferrer">
+              Buka PDF asli
+            </Button>
+          </Box>
+        </Box>
+      );
     if (ext === 'pdf')
       return <iframe title="PDF" src={url} style={{ width: '100%', height: 450 }} />;
     if (['xls', 'xlsx'].includes(ext))
@@ -249,7 +262,7 @@ export function ItemDocsPreview({
             </IconButton>
           </Box>
 
-          {renderFilePreview(currentDoc.file)}
+          {renderFilePreview(currentDoc.file, currentDoc)}
 
           {/* actions – hidden in readOnly */}
           <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 2, mt: 2 }}>

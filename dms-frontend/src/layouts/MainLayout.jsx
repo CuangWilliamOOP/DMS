@@ -2,23 +2,16 @@
 import React from 'react';
 import { Box, Toolbar } from '@mui/material';
 import TopBar from '../components/TopBar';
-import SideNav from '../components/SideNav';
 
 function MainLayout({ children }) {
   return (
     <Box sx={{ display: 'flex' }}>
       <TopBar />
-      <SideNav />
       <Box
         component="main"
-        sx={{
-          flexGrow: 1,
-          p: 2,
-          mt: '64px',         // ruang di atas (AppBar fixed)
-          marginLeft: '200px' // ruang di kiri (Drawer lebar 200px)
-        }}
+        sx={{ flexGrow: 1, p: { xs: 1.5, md: 2 }, minHeight: '100vh', bgcolor: (t)=> t.palette.mode==='dark' ? '#0f111a' : '#eaf2ff' }}
       >
-        <Toolbar />
+        <Toolbar sx={{ minHeight: 64 }} />
         {children}
       </Box>
     </Box>

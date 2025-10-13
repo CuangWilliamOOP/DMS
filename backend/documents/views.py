@@ -1,6 +1,7 @@
 import io
 import os
 import tempfile
+import logging
 
 import fitz
 from PIL import Image, ImageDraw, ImageFont
@@ -16,7 +17,7 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.exceptions import PermissionDenied
 
-from .gpt_parser import gpt_parse_subsections_from_image
+from .gpt_parser import gpt_parse_subsections_from_image, gpt_belongs_to_current
 from .models import Document, SupportingDocument, UserSettings, PaymentProof
 from .serializers import (
     DocumentSerializer,
@@ -25,6 +26,8 @@ from .serializers import (
     PaymentProofSerializer,
 )
 from .utils import generate_unique_item_ref_code, recalc_totals
+
+logger = logging.getLogger(__name__)
 
 
 class DocumentViewSet(viewsets.ModelViewSet):
@@ -245,17 +248,34 @@ class SupportingDocumentViewSet(viewsets.ModelViewSet):
 
         if ext == ".pdf":
             doc = fitz.open(file_path)
-            page = doc.load_page(0)
-            rect = fitz.Rect(50, 50, 300, 110)
+            page = doc[0]
+            rect = fitz.Rect(50, 50, 300, 120)
             page.insert_textbox(
                 rect,
-                f"APPROVED{timestamp}",
-                fontsize=20,
-                color=(1, 0, 0),
+                f"DISETUJUI\n{timestamp}",
+                fontsize=18,
+                color=(0, 0.6, 0),
                 align=fitz.TEXT_ALIGN_CENTER,
             )
             doc.save(temp_path)
             doc.close()
+
+            # replace file with stamped copy
+            new_basename = f"{base}_APPROVED{ext}"
+            with open(temp_path, "rb") as fp:
+                instance.file.save(new_basename, File(fp), save=False)
+            os.remove(temp_path)
+
+            # regenerate preview from stamped PDF (first page)
+            pdf = fitz.open(instance.file.path)
+            pg = pdf[0]
+            pix = pg.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
+            fd, tmpjpg = tempfile.mkstemp(suffix=".jpg"); os.close(fd)
+            with open(tmpjpg, "wb") as f:
+                f.write(pix.tobytes("jpeg"))
+            with open(tmpjpg, "rb") as fp:
+                instance.preview_image.save(f"{base}_APPROVED_PREVIEW.jpg", File(fp), save=False)
+            os.remove(tmpjpg)
         else:
             img = Image.open(file_path).convert("RGBA")
             stamp_layer = Image.new("RGBA", img.size, (255, 255, 255, 0))
@@ -276,47 +296,156 @@ class SupportingDocumentViewSet(viewsets.ModelViewSet):
             format_to_use = "PNG" if ext == ".png" else "JPEG"
             stamped.convert("RGB").save(temp_path, format=format_to_use)
 
-        new_basename = f"{base}_APPROVED{ext}"
-        with open(temp_path, "rb") as fp:
-            instance.file.save(new_basename, File(fp), save=False)
+            new_basename = f"{base}_APPROVED{ext}"
+            with open(temp_path, "rb") as fp:
+                instance.file.save(new_basename, File(fp), save=False)
 
-        os.remove(temp_path)
+            os.remove(temp_path)
 
 
 # -----------------------------------------------------------------------------
 #                    GPT‑VISION PARSE ➜ CREATE DOCUMENT
 # -----------------------------------------------------------------------------
-@api_view(["POST"])    
+# ---- Helpers for multi‑page table parsing (PDF) ----
+def _save_page_image(pdf_doc, page_index: int, dpi: int = 160) -> str:
+    page = pdf_doc.load_page(page_index)
+    mat = fitz.Matrix(dpi / 72, dpi / 72)
+    pix = page.get_pixmap(matrix=mat, alpha=False)
+    fd, path = tempfile.mkstemp(suffix=".png"); os.close(fd)
+    try:
+        pix.save(path)
+        return path
+    except Exception as e:
+        try:
+            os.remove(path)
+        except Exception:
+            pass
+        fd2, path2 = tempfile.mkstemp(suffix=".jpg"); os.close(fd2)
+        with open(path2, "wb") as f:
+            f.write(pix.tobytes("jpeg"))
+        logger.warning("PNG save failed on page %s, fell back to JPEG: %s", page_index, e)
+        return path2
+
+def _is_rekap_header(hdr) -> bool:
+    expected = ["no", "keterangan", "dibayar ke", "bank", "pengiriman"]
+    norm = [str(x).strip().lower() for x in (hdr or [])]
+    return len(norm) >= 5 and norm[:5] == expected
+
+# Detect and strip GRAND TOTAL entries
+
+def _has_grand_total(sections):
+    return any(isinstance(s, dict) and "grand_total" in s for s in (sections or []))
+
+
+def _strip_grand_totals(sections):
+    return [s for s in (sections or []) if not (isinstance(s, dict) and "grand_total" in s)]
+
+
+def _looks_like_continuation(first_parsed, second_parsed) -> bool:
+    if not second_parsed:
+        return False
+    for sec in (second_parsed or []):
+        tbl = sec.get("table") or []
+        if tbl and _is_rekap_header(tbl[0]) and len(tbl) >= 2:
+            # require at least one non-empty data row
+            if any(any(str(c).strip() for c in r) for r in tbl[1:]):
+                return True
+    return False
+
+
+def _save_single_page_pdf(pdf_doc, page_index: int) -> str:
+    single = fitz.open()  # create empty PDF doc
+    single.insert_pdf(pdf_doc, from_page=page_index, to_page=page_index)
+    fd, out = tempfile.mkstemp(suffix=".pdf"); os.close(fd)
+    single.save(out)  # no compression to preserve quality
+    single.close()
+    return out
+
+def _row_ctx(parsed):
+    ctx = []
+    for s_idx, sec in enumerate(parsed or []):
+        tbl = sec.get("table") or []
+        if not tbl or len(tbl) < 2:
+            continue
+        headers = tbl[0]
+        try:
+            ref_i = headers.index("REF_CODE")
+        except ValueError:
+            ref_i = len(headers) - 1
+        for r_idx, row in enumerate(tbl[1:]):
+            if len(row) <= ref_i:
+                continue
+            ctx.append({
+                "section_index": s_idx,
+                "row_index": r_idx,
+                "company": sec.get("company") or "",
+                "headers": headers,
+                "cells": row,
+                "ref_code": row[ref_i],
+            })
+    return ctx
+
+
+@api_view(["POST"])
+# REPLACED: multi-page parse + auto attachment of remaining pages
 def parse_and_store_view(request):
-    uploaded_file = request.FILES.get("file")
-    if not uploaded_file:
+    up = request.FILES.get("file")
+    if not up:
         return JsonResponse({"error": "No file uploaded"}, status=400)
 
-    title = request.data.get("title", "Untitled Document")
+    title   = request.data.get("title", "Untitled Document")
     company = request.data.get("company", "ttu")
-    doc_type = request.data.get("doc_type", "tagihan_pekerjaan")
+    doc_type= request.data.get("doc_type", "tagihan_pekerjaan")
 
-    ext = os.path.splitext(uploaded_file.name)[1].lower()
+    ext = os.path.splitext(up.name)[1].lower()
     with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
-        for chunk in uploaded_file.chunks():
-            tmp.write(chunk)
-        temp_path = tmp.name
+        for c in up.chunks():
+            tmp.write(c)
+        tmp_path = tmp.name
 
-    parsed = gpt_parse_subsections_from_image(temp_path)
+    parsed, table_pages = [], 1
+    pdf = None
 
-    # -------- inject REF_CODE column & codes --------
+    if ext == ".pdf":
+        pdf = fitz.open(tmp_path)
+        p1_png = _save_page_image(pdf, 0)
+        p1 = gpt_parse_subsections_from_image(p1_png) or []
+        os.remove(p1_png)
+        # New strict handling for page-2
+        p2 = []
+        table_pages = 1
+        if pdf.page_count >= 2:
+            p2_png = _save_page_image(pdf, 1)
+            try:
+                # Do not continue table if page-1 already has GRAND TOTAL
+                if not _has_grand_total(p1):
+                    from .gpt_parser import gpt_is_rekap_table_page
+                    dec = gpt_is_rekap_table_page(p2_png)
+                    if dec.get("is_rekap", False):
+                        p2 = gpt_parse_subsections_from_image(p2_png) or []
+                        table_pages = 2
+            finally:
+                try:
+                    os.remove(p2_png)
+                except Exception:
+                    pass
+        parsed = p1 + p2 if table_pages == 2 else p1
+        parsed = _strip_grand_totals(parsed)
+    else:
+        parsed = gpt_parse_subsections_from_image(tmp_path) or []
+        table_pages = 1
+
+    # Inject REF_CODE post-merge
     used_codes = set()
-    for section in parsed:
-        tbl = section.get("table")
+    for sec in parsed:
+        tbl = sec.get("table")
         if not tbl:
             continue
-
-        headers = tbl[0]
-        if "REF_CODE" not in headers:
-            headers.append("REF_CODE")
-
+        hdr = tbl[0]
+        if "REF_CODE" not in hdr:
+            hdr.append("REF_CODE")
         for row in tbl[1:]:
-            if len(row) < len(headers):
+            if len(row) < len(hdr):
                 ref = generate_unique_item_ref_code(used_codes)
                 used_codes.add(ref)
                 row.append(ref)
@@ -326,13 +455,75 @@ def parse_and_store_view(request):
         company=company,
         doc_type=doc_type,
         status="draft",
-        file=uploaded_file,
-        parsed_json=parsed,
+        file=up,
+        parsed_json=recalc_totals(parsed) if parsed else parsed,
     )
 
-    os.remove(temp_path)
+    attached = 0
+    if pdf and pdf.page_count > table_pages:
+        ctx = _row_ctx(parsed)
+        if ctx:
+            ptr = 0
+            seq = {c["ref_code"]: 0 for c in ctx}
+            for p in range(table_pages, pdf.page_count):
+                page_pdf = _save_single_page_pdf(pdf, p)
+                page_png = _save_page_image(pdf, p)
+                decision = gpt_belongs_to_current(
+                    page_png,
+                    current_row=ctx[ptr],
+                    next_row=ctx[ptr + 1] if ptr + 1 < len(ctx) else None,
+                )
+                stay = bool(decision.get("stay", True))
+                conf = float(decision.get("confidence", 0.0))
+                LOW = 0.55
+                if not stay and ptr + 1 < len(ctx):
+                    ptr += 1
+                cur = ctx[ptr]
+                ref = cur["ref_code"]; seq[ref] += 1
+                title_i = f"Lampiran {ref} #{seq[ref]}"
+                with open(page_pdf, "rb") as fp:
+                    sdoc = SupportingDocument(
+                        main_document=doc,
+                        item_ref_code=ref,
+                        supporting_doc_sequence=seq[ref],
+                        title=title_i,
+                        company_name=cur.get("company") or company,
+                        section_index=cur["section_index"],
+                        row_index=cur["row_index"],
+                        status="draft",
+                        ai_auto_attached=True,
+                        ai_confidence=conf,
+                        ai_low_confidence=(conf < LOW),
+                    )
+                    sdoc.file.save(
+                        f"{doc.document_code}_S{cur['section_index']+1}R{cur['row_index']+1}_{seq[ref]}.pdf",
+                        File(fp),
+                        save=True,
+                    )
+                # Save preview image from the rendered page before cleanup
+                try:
+                    with open(page_png, "rb") as fp_img:
+                        sdoc.preview_image.save(
+                            f"{doc.document_code}_{ref}_{seq[ref]}.jpg",
+                            File(fp_img),
+                            save=True,
+                        )
+                finally:
+                    try:
+                        os.remove(page_png)
+                    except Exception:
+                        pass
+                os.remove(page_pdf)
+                attached += 1
+        pdf.close()
 
-    return JsonResponse({"document_id": doc.id, "document_code": doc.document_code})
+    os.remove(tmp_path)
+    return JsonResponse({
+        "document_id": doc.id,
+        "document_code": doc.document_code,
+        "attached_pages": attached,
+        "table_pages": table_pages,
+    }, status=201)
 
 
 @api_view(['POST'])

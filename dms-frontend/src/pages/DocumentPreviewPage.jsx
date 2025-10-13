@@ -157,7 +157,7 @@ export default function DocumentPreviewPage() {
     <>
       <Box
         sx={{
-          position: 'fixed',
+          position: 'absolute',
           zIndex: -1,
           top: 0,
           left: 0,

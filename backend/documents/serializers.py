@@ -25,6 +25,9 @@ class DocumentSerializer(serializers.ModelSerializer):
 class SupportingDocumentSerializer(serializers.ModelSerializer):
     # Expose concatenated identifier (read‑only)
     identifier = serializers.CharField(read_only=True)
+    # Force URL serialization for files/images
+    file = serializers.FileField(use_url=True)
+    preview_image = serializers.ImageField(use_url=True, allow_null=True, required=False)
 
     class Meta:
         model = SupportingDocument
@@ -34,6 +37,9 @@ class SupportingDocumentSerializer(serializers.ModelSerializer):
             "identifier",
             "approved_at",
             "created_at",
+            "ai_auto_attached",
+            "ai_confidence",
+            "ai_low_confidence",
         )
 
 
@@ -44,6 +50,8 @@ class UserSettingsSerializer(serializers.ModelSerializer):
 
 
 class PaymentProofSerializer(serializers.ModelSerializer):
+    # Force URL serialization
+    file = serializers.FileField(use_url=True)
     class Meta:
         model = PaymentProof
         fields = "__all__"

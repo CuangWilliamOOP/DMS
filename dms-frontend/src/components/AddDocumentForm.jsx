@@ -62,9 +62,12 @@ function AddDocumentForm() {
 
   // Config: Company & Document type
   const companies = [
-    { value: 'ttu', label: 'TTU (Tunggal Tunggu Unggul)' },
+    { value: 'ttu', label: 'TTU (Tunggul Tunggal Unggul)' },
     { value: 'asn', label: 'ASN (Alam Subur Nusantara)' },
+    { value: 'olm', label: 'OLM (Ostor Lumbanbanjar Makmur)' },
+    { value: 'ols', label: 'OLS (Ostor Lumbanbanjar Sejahtera)' },
   ];
+
   const documentTypes = [
     { value: 'tagihan_pekerjaan', label: 'Tagihan Pekerjaan' },
   ];

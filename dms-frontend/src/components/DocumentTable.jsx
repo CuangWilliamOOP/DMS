@@ -1217,7 +1217,7 @@ function DocumentTable({ documents, refreshDocuments }) {
         sx={{
           mb: 2,
           borderRadius: 4,
-          overflow: 'hidden',
+          overflowX: 'auto', overflowY: 'hidden',
           background: (theme) =>
             theme.palette.mode === 'dark'
               ? 'linear-gradient(120deg, #0f111a 75%, #1b2240 100%)'

@@ -12,5 +12,5 @@ export function logout() {
   localStorage.removeItem('username');
   localStorage.removeItem('role');
   window.dispatchEvent(new Event("theme_update"));
-  window.location.href = '/login';
+  window.location.replace(`/login?v=${Date.now()}`);
 }

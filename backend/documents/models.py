@@ -1,41 +1,34 @@
-"""backend/documents/models.py – updated pattern for Tagihan Pekerjaan
-
-* Tagihan Pekerjaan (`doc_type == "tagihan_pekerjaan"`):
-    A1-<COMP>-YYMMDD<X><Y>
-      • X ∈ [A‑Z0‑9]  – alfanumerik acak
-      • Y ∈ [0‑9]     – digit acak
-* Dokumen lain tetap menggunakan pola prefix‑bulanan‑running number.
-* `generate_document_code()` stub dipertahankan demi kompatibilitas migrasi lama.
-"""
+# -*- coding: utf-8 -*-
+# backend/documents/models.py
 
 import os
 import random
 import string
-from django.db import models
-from django.core.exceptions import ValidationError
-from django.utils import timezone
-from documents.utils import recalc_totals
+
 from django.conf import settings
+from django.core.exceptions import ValidationError
+from django.db import models
+from django.utils import timezone
 
-# -----------------------------------------------------------------------------
-# Legacy stub (masih dipakai migration 0013_…)
-# -----------------------------------------------------------------------------
+from documents.utils import recalc_totals
 
+
+# ---------------------------------------------------------------------
+# Legacy helper kept for old migrations that import it
+# ---------------------------------------------------------------------
 def generate_document_code():  # noqa: N802
     return "LEGACY-" + "".join(random.choices(string.ascii_uppercase + string.digits, k=6))
 
-# -----------------------------------------------------------------------------
-# Helpers
-# -----------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------
 def validate_file_extension(value):
     ext = os.path.splitext(value.name)[1].lower()
-    if ext not in [
-        ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".png", ".jpg", ".jpeg",
-    ]:
-        raise ValidationError(
-            "File harus PDF, Word, Excel, PNG, JPG, atau JPEG."
-        )
+    allowed = [".pdf", ".doc", ".docx", ".xls", ".xlsx", ".png", ".jpg", ".jpeg"]
+    if ext not in allowed:
+        raise ValidationError("File harus PDF, Word, Excel, PNG, JPG, atau JPEG.")
+
 
 PREFIX_MAP = {
     "pembayaran_pekerjaan": "PP",
@@ -45,11 +38,10 @@ PREFIX_MAP = {
     "default": "DOC",
 }
 
-# -----------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------
 # Model: Document
-# -----------------------------------------------------------------------------
-
-
+# ---------------------------------------------------------------------
 class Document(models.Model):
     DOCUMENT_TYPES = (
         ("ledger_lokasi", "Ledger per Lokasi"),
@@ -90,7 +82,7 @@ class Document(models.Model):
         validators=[validate_file_extension],
     )
 
-    # Timeline fields
+    # Timeline
     reject_comment = models.TextField(blank=True, null=True)
     rejected_at = models.DateTimeField(blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -107,15 +99,12 @@ class Document(models.Model):
     def __str__(self):
         return self.document_code or "(new)"
 
-    # ------------------------------------------------------------------
-    # Code generator
-    # ------------------------------------------------------------------
-
+    # ---- Code generator ------------------------------------------------
     def _generate_next_code(self):
         comp = self.company.upper()
         now = timezone.now()
 
-        # --- Tagihan Pekerjaan khusus: A1 pattern ---
+        # Special pattern for Tagihan Pekerjaan
         if self.doc_type == "tagihan_pekerjaan":
             yymmdd = now.strftime("%y%m%d")  # YYMMDD
             part_x = random.choice(string.ascii_uppercase + string.digits)
@@ -123,12 +112,11 @@ class Document(models.Model):
             code = f"A1-{comp}-{yymmdd}{part_x}{part_y}"
             return code, 0
 
-        # --- Default prefix + running number ---
+        # Default: prefix + monthly running number
         prefix = PREFIX_MAP.get(self.doc_type, PREFIX_MAP["default"])
         yymm = now.strftime("%y%m")
         latest = (
-            Document.objects
-            .filter(
+            Document.objects.filter(
                 doc_type=self.doc_type,
                 company=self.company,
                 created_at__year=now.year,
@@ -142,8 +130,6 @@ class Document(models.Model):
         code = f"{prefix}-{comp}-{yymm}-{seq:04d}"
         return code, seq
 
-    # ------------------------------------------------------------------
-
     def save(self, *args, **kwargs):
         # Always recalc totals from raw values before saving
         if self.parsed_json:
@@ -155,11 +141,9 @@ class Document(models.Model):
         super().save(*args, **kwargs)
 
 
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------------------------
 # Model: SupportingDocument
-# -----------------------------------------------------------------------------
-
-
+# ---------------------------------------------------------------------
 class SupportingDocument(models.Model):
     STATUS_CHOICES = [
         ("draft", "Draft"),
@@ -172,55 +156,64 @@ class SupportingDocument(models.Model):
         on_delete=models.CASCADE,
         related_name="supporting_docs",
     )
+    # Row anchor
     item_ref_code = models.CharField(max_length=12, db_index=True)
-    supporting_doc_sequence = models.PositiveSmallIntegerField(default=1)  # 1, 2, 3 …
+    section_index = models.IntegerField(blank=True, null=True)
+    row_index = models.IntegerField(blank=True, null=True)
 
-    # NEW: concatenated identifier e.g. GK3H2Q4A01
+    # Optional type for future filtering (e.g., "proof_of_payment")
+    doc_type = models.CharField(max_length=30, blank=True, null=True)
+
+    # Per-item sequence and readable ID (e.g., GK3H2Q4A01)
+    supporting_doc_sequence = models.PositiveSmallIntegerField(default=1)
     identifier = models.CharField(max_length=14, unique=True, editable=False)
 
     title = models.CharField(max_length=200, blank=True)
+    company_name = models.CharField(max_length=200, blank=True, null=True)
+
     file = models.FileField(
         upload_to="uploads/supporting_docs/",
         validators=[validate_file_extension],
     )
+
+    # Optional preview/thumbnail image
+    preview_image = models.ImageField(
+        upload_to="previews/supporting_docs/",
+        null=True,
+        blank=True,
+    )
+
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="draft")
+    approved_at = models.DateTimeField(blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
-    # Convenience metadata for quick UI look‑ups
-    company_name = models.CharField(max_length=200, blank=True, null=True)
-    section_index = models.IntegerField(blank=True, null=True)
-    row_index = models.IntegerField(blank=True, null=True)
-
-    approved_at = models.DateTimeField(blank=True, null=True)
-
-    # -----------------------------
-    # Hooks
-    # -----------------------------
+    # AI attachment metadata
+    ai_auto_attached = models.BooleanField(default=False)
+    ai_confidence = models.FloatField(blank=True, null=True)
+    ai_low_confidence = models.BooleanField(default=False)
 
     class Meta:
-        ordering = ["supporting_doc_sequence"]  # oldest first by default
+        ordering = ["supporting_doc_sequence"]
 
     def save(self, *args, **kwargs):
-        # Auto‑populate identifier once both parts are known
+        # Auto-build identifier once both parts are known
         if not self.identifier and self.item_ref_code and self.supporting_doc_sequence:
             self.identifier = f"{self.item_ref_code}{self.supporting_doc_sequence:02d}"
         super().save(*args, **kwargs)
 
     def __str__(self):
-        return self.identifier or (
-            f"{self.main_document.document_code} – {os.path.basename(self.file.name)}"
-        )
+        base = os.path.basename(self.file.name) if self.file else "(no-file)"
+        return self.identifier or f"{self.main_document.document_code} - {base}"
 
 
-# -----------------------------------------------------------------------------
-# Model: PaymentProof
-# -----------------------------------------------------------------------------
-
+# ---------------------------------------------------------------------
+# Model: PaymentProof (separate resource)
+# ---------------------------------------------------------------------
 class PaymentProof(models.Model):
     main_document = models.ForeignKey(
         Document,
         on_delete=models.CASCADE,
-        related_name="payment_proofs"
+        related_name="payment_proofs",
     )
     section_index = models.PositiveIntegerField()
     item_index = models.PositiveIntegerField()
@@ -231,25 +224,25 @@ class PaymentProof(models.Model):
         upload_to="uploads/payment_proofs/",
         validators=[validate_file_extension],
     )
-
     uploaded_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        unique_together = ('main_document', 'section_index', 'item_index')
+        unique_together = ("main_document", "section_index", "item_index")
 
     def save(self, *args, **kwargs):
         if not self.identifier:
-            self.identifier = f"{self.main_document.document_code}S{self.section_index + 1}I{self.item_index + 1}"
+            s = self.section_index + 1
+            i = self.item_index + 1
+            self.identifier = f"{self.main_document.document_code}S{s}I{i}"
         super().save(*args, **kwargs)
 
     def __str__(self):
         return self.identifier
 
 
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------------------------
 # Model: UserSettings
-# -----------------------------------------------------------------------------
-
+# ---------------------------------------------------------------------
 class UserSettings(models.Model):
     user = models.OneToOneField(
         settings.AUTH_USER_MODEL,
@@ -259,13 +252,8 @@ class UserSettings(models.Model):
     # minutes; 0 == never auto-logout
     idle_timeout = models.PositiveIntegerField(default=60)
 
-    THEME_CHOICES = [
-        ("light", "Light"),
-        ("dark", "Dark"),
-    ]
-    theme_mode = models.CharField(
-        max_length=10, choices=THEME_CHOICES, default="light"
-    )
+    THEME_CHOICES = [("light", "Light"), ("dark", "Dark")]
+    theme_mode = models.CharField(max_length=10, choices=THEME_CHOICES, default="light")
 
     def __str__(self):
         return f"{self.user.username} settings"

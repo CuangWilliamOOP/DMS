@@ -59,29 +59,15 @@ function HomePage() {
 
   return (
     <>
-      {/* --- FULL PAGE GRADIENT BACKGROUND --- */}
-      <Box
-        sx={{
-          position: 'fixed',
-          zIndex: -1,
-          top: 0,
-          left: 0,
-          width: '100vw',
-          height: '100vh',
-          background: theme.palette.mode === 'dark'
-            ? '#181a29'
-            : '#e3f0fd',
-          transition: 'background 0.3s',
-        }}
-      />
-      {/* --- FOREGROUND CONTENT --- */}
+      
       <Box
         sx={{
           minHeight: "100vh",
           width: "100%",
           px: { xs: 0, sm: 2, md: 4 },
           py: 5,
-          mt: -10,
+          mt: 0,
+          pt: 1,
           position: 'relative',
         }}
       >
