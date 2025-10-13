@@ -8,8 +8,15 @@ Group=dms
 WorkingDirectory=/srv/dms/app/backend
 EnvironmentFile=/etc/dms.env
 ExecStart=/srv/dms/app/.venv/bin/gunicorn backend.wsgi:application \
-  --timeout 600 --workers 3 --bind 127.0.0.1:8000 \
-  --timeout 300 --graceful-timeout 30 --max-requests 500 --max-requests-jitter 50
+  --bind 127.0.0.1:8000 \
+  --workers 1 \
+  --worker-class gthread \
+  --threads 8 \
+  --timeout 600 \
+  --graceful-timeout 30 \
+  --max-requests 500 \
+  --max-requests-jitter 50
+
 Restart=always
 RestartSec=5
 
