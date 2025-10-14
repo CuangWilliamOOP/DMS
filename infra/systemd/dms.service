@@ -9,7 +9,7 @@ WorkingDirectory=/srv/dms/app/backend
 EnvironmentFile=/etc/dms.env
 ExecStart=/srv/dms/app/.venv/bin/gunicorn backend.wsgi:application \
   --bind 127.0.0.1:8000 \
-  --workers 1 \
+  --workers 3 \
   --worker-class gthread \
   --threads 8 \
   --timeout 600 \
