@@ -10,6 +10,8 @@ from django.conf import settings
 from django.contrib.auth import authenticate
 from django.core.files import File
 from django.http import JsonResponse
+from django.core.cache import cache
+from django.views.decorators.cache import never_cache
 from django.utils import timezone
 from rest_framework import status as drf_status, viewsets
 from rest_framework.decorators import api_view, action, permission_classes
@@ -31,28 +33,28 @@ from .utils import generate_unique_item_ref_code, recalc_totals
 
 logger = logging.getLogger(__name__)
 
-# === simple in-memory progress store ===
-PROGRESS: dict[str, dict] = {}
-PROGRESS_LOCK = threading.Lock()
+PROGRESS_TTL = 60 * 60  # 1h
+
+def _pkey(job_id: str) -> str:
+    return f"progress:{job_id}"
 
 def progress_update(job_id: str | None, percent: int, stage: str = "", **extra):
     if not job_id:
         return
-    p = max(0, min(100, int(percent)))
-    with PROGRESS_LOCK:
-        PROGRESS[job_id] = {
-            "job_id": job_id,
-            "percent": p,
-            "stage": stage,
-            "updated_at": timezone.now().isoformat(),
-            **extra,  # mode, total_items, current_item, etc.
-        }
+    data = {
+        "job_id": job_id,
+        "percent": max(0, min(100, int(percent))),
+        "stage": stage,
+        "updated_at": timezone.now().isoformat(),
+        **extra,
+    }
+    cache.set(_pkey(job_id), data, timeout=PROGRESS_TTL)
 
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
+@never_cache
 def progress_view(request, job_id: str):
-    with PROGRESS_LOCK:
-        data = PROGRESS.get(job_id)
+    data = cache.get(_pkey(job_id))
     if not data:
         return JsonResponse({"job_id": job_id, "percent": 0, "stage": "pending"})
     return JsonResponse(data)
@@ -537,8 +539,6 @@ def parse_and_store_view(request):
             total_items=total_items,
             current_item=total_items,
         )
-        with PROGRESS_LOCK:
-            PROGRESS.pop(job_id, None)
         return JsonResponse({
             "document_id": doc.id,
             "document_code": doc.document_code,
@@ -624,8 +624,6 @@ def parse_and_store_view(request):
     os.remove(tmp_path)
     progress_update(job_id, 96, "Menyimpan ke basis data")
     progress_update(job_id, 100, "Selesai")
-    with PROGRESS_LOCK:
-        PROGRESS.pop(job_id, None)
     return JsonResponse({
         "document_id": doc.id,
         "document_code": doc.document_code,
