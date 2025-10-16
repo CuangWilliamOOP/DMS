@@ -85,6 +85,8 @@ Under each section is a table with the following columns:
   5. "PENGIRIMAN"
 
 Note: Titles may also be non-PT categories like "Sparepart" or "Penggantian Kas Kecil Kantor".
+On continuation pages where the header isn’t reprinted, assume the same columns and keep extracting rows.
+Once you see any variation of "Total cek yang" ... "dibuka", include a final object { "grand_total": "..." }.
 For each section:
   - Save the table as a 2D array of rows, where row 0 is the header:
     ["No", "KETERANGAN", "DIBAYAR KE", "BANK", "PENGIRIMAN"].

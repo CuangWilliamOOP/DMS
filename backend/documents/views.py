@@ -443,34 +443,56 @@ def parse_and_store_view(request):
     if ext == ".pdf":
         pdf = fitz.open(tmp_path)
         progress_update(job_id, 5, "Membaca halaman 1")
-        p1_png = _save_page_image(pdf, 0)
+
+        # --- parse recap block across N pages ---
+        parsed = []
+        table_pages = 0
+
+        # page 0 is recap by definition in current format
+        p0_png = _save_page_image(pdf, 0)
         _gptp.install_progress(lambda pct, stage: progress_update(job_id, pct, stage))
-        p1 = gpt_parse_subsections_from_image(p1_png) or []
+        p0 = gpt_parse_subsections_from_image(p0_png) or []
         _gptp.install_progress(None)
-        os.remove(p1_png)
-        progress_update(job_id, 10, "Halaman 1 selesai")
-        # New strict handling for page-2
-        p2 = []
+        os.remove(p0_png)
+        parsed.extend(p0)
         table_pages = 1
-        if pdf.page_count >= 2:
-            p2_png = _save_page_image(pdf, 1)
+        progress_update(job_id, 10, "Halaman 1 selesai")
+
+        # keep reading recap pages until GRAND TOTAL is found
+        for idx in range(1, pdf.page_count):
+            if _has_grand_total(parsed):
+                break
+            page_text = (pdf.load_page(idx).get_text("text") or "").lower()
+
+            png = _save_page_image(pdf, idx)
             try:
-                # Do not continue table if page-1 already has GRAND TOTAL
-                if not _has_grand_total(p1):
-                    from .gpt_parser import gpt_is_rekap_table_page
-                    dec = gpt_is_rekap_table_page(p2_png)
-                    if dec.get("is_rekap", False):
-                        _gptp.install_progress(lambda pct, stage: progress_update(job_id, pct, stage))
-                        p2 = gpt_parse_subsections_from_image(p2_png) or []
-                        _gptp.install_progress(None)
-                        table_pages = 2
+                # Parse first, then decide if this is a valid continuation or the closing page
+                _gptp.install_progress(lambda pct, stage: progress_update(job_id, pct, stage))
+                cur = gpt_parse_subsections_from_image(png) or []
+                _gptp.install_progress(None)
+
+                # valid if it looks like recap continuation or contains grand_total
+                is_valid = _looks_like_continuation(parsed[-1:], cur) or _has_grand_total(cur)
+                # also accept pages that show the closing sentence even if header is absent
+                end_marker = ("total cek yang mau dibuka" in page_text) or ("total cek yang dibuka" in page_text)
+                if not is_valid and not end_marker:
+                    break
+
+                if end_marker and not _has_grand_total(cur):
+                    # ensure we record the closing marker even if the model returned no JSON
+                    cur = cur + [{"grand_total": ""}]
+
+                parsed.extend(cur)
+                table_pages = idx + 1
+                if _has_grand_total(cur):
+                    break
             finally:
                 try:
-                    os.remove(p2_png)
+                    os.remove(png)
                 except Exception:
                     pass
+
         progress_update(job_id, 15, "Ekstraksi tabel")
-        parsed = p1 + p2 if table_pages == 2 else p1
         parsed = _strip_grand_totals(parsed)
     else:
         progress_update(job_id, 5, "Membaca gambar")

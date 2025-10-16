@@ -122,6 +122,10 @@ function AddDocumentForm() {
         if ((data.percent || 0) >= 100) {
           clearInterval(pollRef.current);
           pollRef.current = null;
+          setPercent(100);
+          setStage('Selesai');
+          setTimeout(() => setProgressOpen(false), 600);
+          setTimeout(() => navigate('/home'), 900);
         }
       } catch {
         // ignore polling errors
@@ -154,7 +158,7 @@ function AddDocumentForm() {
       setStage('Mengunggah berkas');
       startPolling(id);
 
-      const response = await API.post('/parse-and-store/', formData, {
+      const res = await API.post('/parse-and-store/', formData, {
         headers: { 'Content-Type': 'multipart/form-data', 'X-Job-ID': id },
         onUploadProgress: (evt) => {
           const u = evt.total ? Math.round((evt.loaded * 100) / evt.total) : null;
@@ -162,19 +166,12 @@ function AddDocumentForm() {
           // do not call setPercent() here; server drives %
         },
       });
-
-      // On success:
-      setSnackbarMessage(`Dokumen berhasil diupload & diproses! ID: ${response.data.document_id}`);
-      setSnackbarSeverity('success');
-      setSnackbarOpen(true);
-
-  // Navigate after a brief delay so user sees the snackbar
-  setPercent(100);
-  setStage('Selesai');
-  setTimeout(() => setProgressOpen(false), 800);
-      setTimeout(() => {
-        navigate('/home');
-      }, 1500);
+      // Handle async (202) only; rely on poller to close and navigate on completion
+      if (res.status === 202) {
+        setSnackbarMessage('Unggahan diterima. Parsing berjalan.');
+        setSnackbarSeverity('info');
+        setSnackbarOpen(true);
+      }
 
     } catch (err) {
       // On failure:
