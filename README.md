@@ -1,29 +1,72 @@
 # Staging Deployment Guide — Refresh (October 2025)
-
 This updates and complements the existing deployment doc. It captures fixes we applied during the 2025‑10 incident (media not serving, cache issues, wrong Python package), and standardizes Nginx + systemd so a fresh VPS reproduces the working state quickly.
 
----
+## Table of Contents
+- [0) Quick checklist for a fresh VPS](#0-quick-checklist-for-a-fresh-vps)
+- [1) Canonical Nginx site (HTTPS)](#1-canonical-nginx-site-https)
+  - [1.1 Cache behavior](#11-cache-behavior)
+  - [1.2 Single TLS vhost rule](#12-single-tls-vhost-rule)
+- [2) Environment file /etc/dms.env (staging template)](#2-environment-file-etcdmsenv-staging-template)
+- [3) Gunicorn systemd unit](#3-gunicorn-systemd-unit)
+- [4) Frontend build & deploy](#4-frontend-build--deploy)
+- [5) Verifications](#5-verifications)
+- [6) One‑command deploy script](#6-onecommand-deploy-script)
+- [7) Infra in Git (repeatable setup)](#7-infra-in-git-repeatable-setup)
+- [8) Troubleshooting quick refs](#8-troubleshooting-quick-refs)
+- [Appendix A — Python packages](#appendix-a--python-packages)
+- [Appendix B — Minimal health checks](#appendix-b--minimal-health-checks)
+- [DMS Guide — Async parsing & Redis progress (Oct 2025)](#dms-guide--async-parsing--redis-progress-oct-2025)
 
-## 0) Quick checklist for a fresh VPS
+## Summary
 
-1. Point DNS `staging.caw-dms.com` → VPS IP.
-2. Install: `git python3-venv python3-pip nginx nodejs npm certbot python3-certbot-nginx apache2-utils build-essential`.
-3. Create `/srv/dms/app`, clone repo, create and activate venv.
-4. `pip install -r backend/requirements.txt` (ensure **PyMuPDF** is installed; see Appendix A).
-5. Create `/etc/dms.env` with real values (see Section 2) and `chmod 640; chown root:dms`.
-6. `python manage.py migrate && python manage.py collectstatic --noinput`.
-7. Build frontend → `npm run build` → `rsync build/ → /var/www/dms-frontend/`.
-8. Install `dms.service` (Gunicorn), enable and start it.
-9. Install Nginx site (includes `/media/`, `/api/`, and SPA fallback in the **right order**), test and reload.
-10. Issue TLS with Certbot. Verify.
+We moved parsing off the web tier and added a determinate progress UI.
 
----
+## New/changed environment
 
-## 1) Canonical Nginx site (HTTPS)
+```
 
-> Put this at `/etc/nginx/sites-available/dms`, symlink to `sites-enabled`.
+## Request flow
 
-```nginx
+1. **POST** `/api/parse-and-store/` with `X-Job-ID` and file ⇒ HTTP **202** `{ job_id }`.
+
+## Progress semantics
+
+* **0–20%**: parse table + build items.
+
+## Deploy steps
+
+```
+
+## Scaling
+
+* Web: `gunicorn ... --workers 3 --worker-class gthread --threads 8`.
+
+## Troubleshooting
+
+* **Progress stuck at 1%**: ensure Gunicorn uses `gthread`; confirm Celery running; check Redis `PING`.
+
+## Rollback
+
+* Stop Celery: `sudo systemctl stop dms-celery`.
+
+## Changelog snippet (Oct 2025)
+
+* Add Celery async pipeline and Redis progress store.
+
+0) Quick checklist for a fresh VPS
+Point DNS staging.caw-dms.com → VPS IP.
+Install: git python3-venv python3-pip nginx nodejs npm certbot python3-certbot-nginx apache2-utils build-essential.
+Create /srv/dms/app, clone repo, create and activate venv.
+pip install -r backend/requirements.txt (ensure PyMuPDF is installed; see Appendix A).
+Create /etc/dms.env with real values (see Section 2) and chmod 640; chown root:dms.
+python manage.py migrate && python manage.py collectstatic --noinput.
+Build frontend → npm run build → rsync build/ → /var/www/dms-frontend/.
+Install dms.service (Gunicorn), enable and start it.
+Install Nginx site (includes /media/, /api/, and SPA fallback in the right order), test and reload.
+Issue TLS with Certbot. Verify.
+1) Canonical Nginx site (HTTPS)
+Put this at /etc/nginx/sites-available/dms, symlink to sites-enabled.
+
 server {
     listen 80;
     server_name staging.caw-dms.com;
@@ -65,29 +108,17 @@ server {
     include /etc/letsencrypt/options-ssl-nginx.conf;
     ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
 }
-```
-
-### 1.1 Cache behavior
-
-* Prevent stale HTML: add `add_header Cache-Control "no-store, must-revalidate" always;` inside `location /` if the browser keeps old bundles.
-* Cache static assets hard: serve `/static/` and CRA build assets with `Cache-Control: public, max-age=31536000, immutable`.
-
+1.1 Cache behavior
+Prevent stale HTML: add add_header Cache-Control "no-store, must-revalidate" always; inside location / if the browser keeps old bundles.
+Cache static assets hard: serve /static/ and CRA build assets with Cache-Control: public, max-age=31536000, immutable.
 Example blocks:
 
-```nginx
 location /static/ { alias /var/www/dms-frontend/static/; add_header Cache-Control "public, max-age=31536000, immutable" always; }
 location = /index.html { add_header Cache-Control "no-store, must-revalidate" always; }
-```
+1.2 Single TLS vhost rule
+Ensure only one active server { listen 443 … server_name staging.caw-dms.com; } exists. Duplicate vhosts cause the SPA to capture /media/ and return index.html.
 
-### 1.2 Single TLS vhost rule
-
-Ensure only **one** active `server { listen 443 … server_name staging.caw-dms.com; }` exists. Duplicate vhosts cause the SPA to capture `/media/` and return `index.html`.
-
----
-
-## 2) Environment file `/etc/dms.env` (staging template)
-
-```ini
+2) Environment file /etc/dms.env (staging template)
 # Django
 DJANGO_SETTINGS_MODULE=backend.settings
 DJANGO_SECRET_KEY=<strong-random-secret>
@@ -107,17 +138,11 @@ DB_PORT=5432
 
 # OpenAI and other keys live here only; never in repo
 # OPENAI_API_KEY=<secret>
-```
+Load env for ad‑hoc Django commands: set -a; source /etc/dms.env; set +a
 
-> Load env for ad‑hoc Django commands: `set -a; source /etc/dms.env; set +a`
+3) Gunicorn systemd unit
+/etc/systemd/system/dms.service:
 
----
-
-## 3) Gunicorn systemd unit
-
-`/etc/systemd/system/dms.service`:
-
-```ini
 [Unit]
 Description=DMS Django via Gunicorn
 After=network.target
@@ -134,68 +159,41 @@ RestartSec=3
 
 [Install]
 WantedBy=multi-user.target
-```
-
 Commands:
 
-```bash
 sudo systemctl daemon-reload
 sudo systemctl enable --now dms
 sudo systemctl status dms --no-pager
-```
-
----
-
-## 4) Frontend build & deploy
-
-```bash
+4) Frontend build & deploy
 cd /srv/dms/app/dms-frontend
 npm install
 npm run build
 sudo rsync -a --delete build/ /var/www/dms-frontend/
 sudo systemctl reload nginx
-```
+API base URL: same‑origin /api in staging/production. Override with REACT_APP_API_BASE_URL if needed.
 
-**API base URL**: same‑origin `/api` in staging/production. Override with `REACT_APP_API_BASE_URL` if needed.
+Login refresh tip: after login, prefer window.location.replace('/home?v='+Date.now()) to avoid stale bundles.
 
-**Login refresh tip**: after login, prefer `window.location.replace('/home?v='+Date.now())` to avoid stale bundles.
+5) Verifications
+Media path: pick a real file and confirm MIME type is image/pdf, not text/html.
 
----
+FILE=$(find /srv/dms/app/backend/media -type f \( -name '*.pdf' -o -name '*.jpg' -o -name '*.png' \) | head -1)
+URL="/media${FILE#/srv/dms/app/backend/media}"
+curl -I "https://staging.caw-dms.com$URL"
+API: curl -I https://staging.caw-dms.com/api/ should return 301/405 from Django, not Nginx 404.
 
-## 5) Verifications
+Service: journalctl -u dms -f while hitting endpoints.
 
-* **Media path**: pick a real file and confirm MIME type is image/pdf, not `text/html`.
-
-  ```bash
-  FILE=$(find /srv/dms/app/backend/media -type f \( -name '*.pdf' -o -name '*.jpg' -o -name '*.png' \) | head -1)
-  URL="/media${FILE#/srv/dms/app/backend/media}"
-  curl -I "https://staging.caw-dms.com$URL"
-  ```
-
-* **API**: `curl -I https://staging.caw-dms.com/api/` should return 301/405 from Django, not Nginx 404.
-
-* **Service**: `journalctl -u dms -f` while hitting endpoints.
-
----
-
-## 6) One‑command deploy script
-
-`/srv/dms/deploy.sh` (committed in `scripts/`): pulls, installs backend deps, migrates, builds frontend, rsyncs, restarts Gunicorn and reloads Nginx.
+6) One‑command deploy script
+/srv/dms/deploy.sh (committed in scripts/): pulls, installs backend deps, migrates, builds frontend, rsyncs, restarts Gunicorn and reloads Nginx.
 
 Usage:
 
-```bash
 ssh dms@<VPS_IP>
 /srv/dms/deploy.sh
-```
-
----
-
-## 7) Infra in Git (repeatable setup)
-
+7) Infra in Git (repeatable setup)
 Track configs in the repo and apply with a script:
 
-```
 infra/
   nginx/
     dms.conf          # full site config (this doc’s Nginx)
@@ -205,38 +203,159 @@ infra/
     .env.example      # placeholders only
 scripts/
   apply-configs.sh    # copies infra → /etc, tests, reloads
+Do not commit: real /etc/dms.env, TLS keys/certs, or .htpasswd.
+
+8) Troubleshooting quick refs
+/media returns text/html → /media missing or overshadowed by SPA fallback. Ensure the /media/ block exists inside the active TLS server and appears before location /.
+504 / long parses → raise Gunicorn --timeout and Nginx proxy_read_timeout as above.
+CSRF or SECRET_KEY errors → run management commands with env loaded; ensure /etc/dms.env is present.
+Static not updating → rebuild, rsync, and reload Nginx; consider no‑store on index.html.
+Appendix A — Python packages
+Use PyMuPDF to provide the fitz module. Do not install the fitz stub from PyPI.
+
+pip uninstall -y fitz
+pip install PyMuPDF==1.23.17
+python -c "import fitz; print(fitz.__doc__[:40])"  # sanity check
+Appendix B — Minimal health checks
+Add /api/health/ Django view that returns 200 JSON. Point uptime monitor at / and /api/health/.
+Keep this file authoritative. If you tweak live configs or timeouts, reflect them here and commit under infra/ for full reproducibility.
+
+
+# DMS Guide — Async parsing & Redis progress (Oct 2025)
+
+## Summary
+
+We moved parsing off the web tier and added a determinate progress UI.
+
+* **Frontend:** determinate circular progress, polls `/api/progress/<job_id>/`, accepts **202** from `/api/parse-and-store/`.
+* **Backend:** Celery worker executes parsing; progress stored in Redis with TTL; web view enqueues and returns.
+* **Infra:** Threaded Gunicorn for concurrent GET/POST; new `dms-celery` systemd unit; infra configs committed.
+
+## New/changed environment
+
+```
+REDIS_URL=redis://127.0.0.1:6379/0
+CELERY_BROKER_URL=${REDIS_URL}
+CELERY_RESULT_BACKEND=${REDIS_URL}
+DJANGO_ALLOWED_HOSTS=staging.caw-dms.com,43.229.85.46,localhost,127.0.0.1
 ```
 
-**Do not commit**: real `/etc/dms.env`, TLS keys/certs, or `.htpasswd`.
+## File changes (by path)
 
----
+### Backend
 
-## 8) Troubleshooting quick refs
+* `backend/settings.py`
 
-* **/media returns text/html** → `/media` missing or overshadowed by SPA fallback. Ensure the `/media/` block exists **inside the active TLS server** and appears **before** `location /`.
-* **504 / long parses** → raise Gunicorn `--timeout` and Nginx `proxy_read_timeout` as above.
-* **CSRF or SECRET_KEY errors** → run management commands with env loaded; ensure `/etc/dms.env` is present.
-* **Static not updating** → rebuild, rsync, and reload Nginx; consider no‑store on `index.html`.
+  * Add `REDIS_URL` and `CACHES['default']` via `django-redis`.
+* `backend/celery.py` (new)
 
----
+  * Celery app bootstrap, imports `backend.tasks`, timezone `Asia/Jakarta`, soft/hard time limits.
+* `backend/__init__.py` (new)
 
-## Appendix A — Python packages
+  * Exposes `celery_app` for Django import side‑effects.
+* `backend/tasks.py`
 
-* Use **PyMuPDF** to provide the `fitz` module. Do **not** install the `fitz` stub from PyPI.
+  * `@shared_task(name="parse_job", queue="parse")` calls `_parse_and_store_core(...)` and cleans temp file.
+* `documents/views.py`
 
-  ```bash
-  pip uninstall -y fitz
-  pip install PyMuPDF==1.23.17
-  python -c "import fitz; print(fitz.__doc__[:40])"  # sanity check
-  ```
+  * **New** `progress_update(job_id, percent, stage, **extra)` using `django.core.cache.cache` with TTL (no in‑memory dict).
+  * `@api_view(["GET"]) progress_view(job_id)` reads from Redis and returns JSON. `@never_cache` and `IsAuthenticated`.
+  * `@api_view(["POST"]) parse_and_store_view` now:
 
----
+    * Saves upload to a temp path.
+    * Emits early progress ticks (2→20%).
+    * Enqueues `parse_job` via Celery and returns **202** + `job_id`.
+  * `_parse_and_store_core(...)` does the actual parse + DB writes and per‑item progress 20→100.
 
-## Appendix B — Minimal health checks
+### Frontend
 
-* Add `/api/health/` Django view that returns 200 JSON. Point uptime monitor at `/` and `/api/health/`.
+* `src/AddDocumentForm.jsx`
 
----
+  * Sends `X-Job-ID: crypto.randomUUID()`.
+  * Uses Axios `onUploadProgress` **for label only** (no forced percent).
+  * Polls `/api/progress/<job_id>/` every ~500 ms; updates `percent`, `stage` and shows counts when present.
+  * Closes overlay and navigates on `percent >= 100`.
+  * Fix `Slide` props: `<Slide {...props} direction="up" />`.
+* `src/api.js`
 
-Keep this file authoritative. If you tweak live configs or timeouts, reflect them here and commit under `infra/` for full reproducibility.
+  * `getProgress(jobId)` helper.
 
+### Infra (committed under `infra/`)
+
+* `infra/systemd/dms.service`
+
+  * Gunicorn with `--worker-class gthread --threads 8`; start with `--workers 1` (dev) or `--workers 3` (prod) and `--timeout 600`.
+* `infra/systemd/dms-celery.service` (new)
+
+  * Celery worker: `celery -A backend worker -Q parse -l info --concurrency=2`.
+* `infra/nginx/dms.nginx.conf`
+
+  * Keep `proxy_read_timeout 600s;`, `client_max_body_size` as needed.
+* `infra/env/dms.env.example`
+
+  * Non‑secret keys, includes `REDIS_URL`, Celery URLs, `DJANGO_ALLOWED_HOSTS`.
+
+## Request flow
+
+1. **POST** `/api/parse-and-store/` with `X-Job-ID` and file ⇒ HTTP **202** `{ job_id }`.
+2. Celery worker picks the job, writes progress to Redis (`progress:<job_id>`).
+3. Frontend polls **GET** `/api/progress/<job_id>/` until `percent==100`.
+
+## Progress semantics
+
+* **0–20%**: parse table + build items.
+* **20–100%**: per‑item: “Mulai isi dokumen pendukung: item k/total”.
+* Payload fields: `percent`, `stage`, `mode` (`pdf|table_only`), `total_items`, `current_item`.
+* Keys expire via TTL (1h). Do not delete immediately after 100% to avoid flicker.
+
+## Deploy steps
+
+```
+# backend
+source /srv/dms/app/.venv/bin/activate
+pip install -r backend/requirements.txt
+sudo systemctl restart dms
+
+# celery worker
+sudo systemctl restart dms-celery
+
+# frontend
+cd /srv/dms/app/dms-frontend
+npm run build
+sudo rsync -a --delete build/ /var/www/dms-frontend/
+sudo systemctl reload nginx
+```
+
+## Scaling
+
+* Web: `gunicorn ... --workers 3 --worker-class gthread --threads 8`.
+* Worker: `--concurrency` tuned to CPU and model throughput.
+* Progress is Redis‑backed, so multiple web workers are safe.
+
+## Limits and timeouts
+
+* Nginx: `client_max_body_size 50m; proxy_read_timeout 600s;`.
+* Gunicorn: `--timeout 600`.
+* Celery: `task_soft_time_limit 1700`, `task_time_limit 1800`.
+* App: reject huge PDFs or page counts early with a clear message.
+
+## Troubleshooting
+
+* **Progress stuck at 1%**: ensure Gunicorn uses `gthread`; confirm Celery running; check Redis `PING`.
+* **`pending` responses**: no Redis key yet. Verify view emits early ticks and queue is not saturated.
+* **`DisallowedHost`**: set `DJANGO_ALLOWED_HOSTS` in `/etc/dms.env` and restart.
+* **Auth errors**: both endpoints require JWT; ensure frontend includes token.
+
+## Rollback
+
+* Stop Celery: `sudo systemctl stop dms-celery`.
+* Switch Gunicorn back (optional): multiple sync workers.
+* Revert `parse_and_store_view` to synchronous implementation.
+
+## Changelog snippet (Oct 2025)
+
+* Add Celery async pipeline and Redis progress store.
+* Add `dms-celery` systemd unit.
+* Convert `/api/parse-and-store/` to enqueue + 202.
+* Update progress UI to determinate circular with stage text and counts.
+* Commit Nginx and systemd configs to `infra/`.
