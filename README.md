@@ -257,6 +257,36 @@ DJANGO_ALLOWED_HOSTS=staging.caw-dms.com,43.229.85.46,localhost,127.0.0.1
 
   * `@shared_task(name="parse_job", queue="parse")` calls `_parse_and_store_core(...)` and cleans temp file.
 * `documents/views.py`
+  * Marker detection & OCR improvements (Nov 2025)
+    - Purpose: make ALPHA/BETA corner marker detection faster, cheaper, and more deterministic.
+    - Behavior changes (views.py):
+      - Probe only the first supporting page (fast text) to decide marker mode; fallback to original GPT per-page classifier if no markers.
+      - While in an ALPHA-x counting group, stop running marker detection entirely and attach the next x-1 pages at disk speed.
+      - For plain ALPHA (no numeric x) the default policy remains a single-page attachment; optionally enable open-ended grouping until BETA via env `ALPHA_PLAIN_POLICY=until_beta`.
+      - Reuse a single rendered PNG per page for both OCR detection and preview image to avoid double renders.
+    - OCR gating and budget (views.py):
+      - OCR fallback is budgeted and tiny: `OCR_MARKER_BUDGET` (default 2) controls how many GPT OCR fallbacks are allowed per parse.
+      - OCR fallback is only attempted in a small probe window (first two supporting pages) or at rare escalation points when using `until_beta` policy.
+    - Local OCR attempt: try `pytesseract` first on the page PNG, then crop the top-right and call the GPT vision helper only if local OCR fails.
+    - Implementation notes: detection helpers added — `_detect_marker_on_page` (fast text), `_detect_from_existing_png` (local OCR → GPT crop), and `_detect_marker_on_page_smart` (reduced-DPI render for one-off OCR).
+
+  * Marker OCR helper changes (gpt_parser.py)
+    - `gpt_detect_corner_marker(b64_image)` now uses a lighter default model and fewer tokens for the small crop to reduce latency and cost:
+      - Default model via `OPENAI_MARKER_MODEL` or fallback `gpt-4o-mini`.
+      - `max_tokens=30` for concise JSON responses.
+    - `extract_json_from_markdown` improved to robustly extract JSON from markdown/code fences.
+    - The `gpt_*` helpers remain as fallbacks for per-page classification and rekap detection.
+
+  * Env vars introduced / used
+    - `ALPHA_PLAIN_POLICY` = "one" (default) or "until_beta" — controls plain ALPHA behavior.
+    - `OCR_MARKER_BUDGET` = 2 (default) — how many GPT OCR fallbacks are allowed per parse.
+    - `OPENAI_MARKER_MODEL` — override the model used for corner-marker detection (defaults to `gpt-4o-mini`).
+
+  * Testing notes
+    - Test ALPHA-x PDFs: confirm only the ALPHA page triggers detection then the next x-1 pages attach without detection.
+    - Test plain ALPHA default: ensure single-page attachment unless `ALPHA_PLAIN_POLICY=until_beta` is set.
+    - Verify OCR budget behavior by setting `OCR_MARKER_BUDGET=0` to disable GPT OCR fallbacks.
+
 
   * **New** `progress_update(job_id, percent, stage, **extra)` using `django.core.cache.cache` with TTL (no in‑memory dict).
   * `@api_view(["GET"]) progress_view(job_id)` reads from Redis and returns JSON. `@never_cache` and `IsAuthenticated`.

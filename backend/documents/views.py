@@ -1,5 +1,7 @@
 import io
 import os
+import re
+import base64
 import tempfile
 import logging
 import threading
@@ -20,7 +22,11 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.exceptions import PermissionDenied
 
-from .gpt_parser import gpt_parse_subsections_from_image, gpt_belongs_to_current
+from .gpt_parser import (
+    gpt_parse_subsections_from_image,
+    gpt_belongs_to_current,
+    gpt_detect_corner_marker,
+)
 from . import gpt_parser as _gptp
 from .models import Document, SupportingDocument, UserSettings, PaymentProof
 from .serializers import (
@@ -34,6 +40,7 @@ from .utils import generate_unique_item_ref_code, recalc_totals
 logger = logging.getLogger(__name__)
 
 PROGRESS_TTL = 60 * 60  # 1h
+OCR_MARKER_BUDGET = int(os.environ.get("OCR_MARKER_BUDGET", "2"))
 
 def _pkey(job_id: str) -> str:
     return f"progress:{job_id}"
@@ -390,6 +397,90 @@ def _save_single_page_pdf(pdf_doc, page_index: int) -> str:
     single.close()
     return out
 
+# --- Marker detection helpers (fast text + OCR fallback) ---
+def _crop_top_right_b64(image_path: str, w_frac: float = 0.35, h_frac: float = 0.25) -> str:
+    """Return base64 of a top-right crop of the image."""
+    img = Image.open(image_path).convert("RGB")
+    w, h = img.size
+    cw, ch = max(1, int(w * w_frac)), max(1, int(h * h_frac))
+    left = w - cw
+    upper = 0
+    right = w
+    lower = ch
+    crop = img.crop((left, upper, right, lower))
+    buf = io.BytesIO()
+    crop.save(buf, format="JPEG", quality=80)
+    return base64.b64encode(buf.getvalue()).decode("utf-8")
+
+
+def _detect_marker_on_page(pdf_doc, page_index: int) -> tuple[str | None, int | None]:
+    """Fast text-only detection of ALPHA[-x] or BETA on a page (search entire page text)."""
+    try:
+        page = pdf_doc.load_page(page_index)
+        txt = (page.get_text("text") or "").lower()
+    except Exception:
+        txt = ""
+
+    # Greek letters too
+    # Prefer ALPHA-x capture
+    m = re.search(r"\balpha\s*-\s*(\d+)\b|α\s*-\s*(\d+)\b", txt)
+    if m:
+        num = next((g for g in m.groups() if g), None)
+        return "ALPHA", int(num) if num and num.isdigit() else None
+
+    # Plain ALPHA without number
+    if re.search(r"\balpha\b|\bα\b", txt):
+        return "ALPHA", None
+
+    # BETA
+    if re.search(r"\bbeta\b|\bβ\b", txt):
+        return "BETA", None
+
+    return None, None
+
+
+def _detect_marker_on_page_smart(pdf_doc, page_index: int) -> tuple[str | None, int | None]:
+    """Fast detection first; if none, OCR the top-right crop via GPT vision."""
+    tag, x = _detect_marker_on_page(pdf_doc, page_index)
+    if tag:
+        return tag, x
+    # OCR fallback
+    try:
+        img_path = _save_page_image(pdf_doc, page_index, dpi=100)
+        b64 = _crop_top_right_b64(img_path)
+        try:
+            os.remove(img_path)
+        except Exception:
+            pass
+        data = gpt_detect_corner_marker(b64)
+        return data.get("tag"), data.get("x")
+    except Exception:
+        return None, None
+
+
+def _detect_from_existing_png(png_path: str) -> tuple[str | None, int | None]:
+    """Try local OCR first (pytesseract), then GPT crop. Returns (tag, x)."""
+    # local OCR (optional)
+    try:
+        import pytesseract  # type: ignore
+        txt = pytesseract.image_to_string(Image.open(png_path), lang="eng").lower()
+        if "beta" in txt or "β" in txt:
+            return ("BETA", None)
+        if "alpha" in txt or "α" in txt:
+            m = re.search(r"alpha\s*[-–—]?\s*(\d+)", txt)
+            return ("ALPHA", int(m.group(1)) if m else None)
+    except Exception:
+        pass
+    # GPT fallback (crop only the top-right)
+    try:
+        b64 = _crop_top_right_b64(png_path, w_frac=0.28, h_frac=0.20)
+        out = _gptp.gpt_detect_corner_marker(b64)
+        if out.get("tag") in ("ALPHA", "BETA"):
+            return out["tag"], out.get("x")
+    except Exception:
+        pass
+    return (None, None)
+
 def _row_ctx(parsed):
     ctx = []
     for s_idx, sec in enumerate(parsed or []):
@@ -419,6 +510,7 @@ def _row_ctx(parsed):
 @permission_classes([IsAuthenticated])
 # REPLACED: multi-page parse + auto attachment of remaining pages
 def parse_and_store_view(request):
+    global OCR_MARKER_BUDGET
     job_id = request.headers.get("X-Job-ID")  # client-generated UUID
     progress_update(job_id, 1, "Menyiapkan unggahan")
     up = request.FILES.get("file")
@@ -568,79 +660,304 @@ def parse_and_store_view(request):
             "table_pages": table_pages,
         }, status=201)
     if pdf and pdf.page_count > table_pages:
-        ctx = _row_ctx(parsed)
-        if ctx:
-            total_items = len(ctx)
-            current_ref = None
-            ptr = 0
-            seq = {c["ref_code"]: 0 for c in ctx}
-            for i, p in enumerate(range(table_pages, pdf.page_count), 1):
-                page_pdf = _save_single_page_pdf(pdf, p)
-                page_png = _save_page_image(pdf, p)
-                decision = gpt_belongs_to_current(
-                    page_png,
-                    current_row=ctx[ptr],
-                    next_row=ctx[ptr + 1] if ptr + 1 < len(ctx) else None,
-                )
-                stay = bool(decision.get("stay", True))
-                if not stay and ptr + 1 < len(ctx):
-                    ptr += 1
-                cur = ctx[ptr]
-                ref = cur["ref_code"]
+        items_ctx = _row_ctx(parsed)
+        if items_ctx:
+            total_items = len(items_ctx)
+            seq = {c["ref_code"]: 0 for c in items_ctx}
 
-                # 🔔 bump when starting a new item
-                if ref != current_ref:
-                    item_idx = ptr  # 0-based
-                    pct = 20 + int(80 * item_idx / max(1, total_items))
-                    progress_update(
-                        job_id,
-                        pct,
-                        f"Mulai isi dokumen pendukung: item {item_idx+1}/{total_items}",
-                        mode=mode,
-                        total_items=total_items,
-                        current_item=item_idx + 1,
-                    )
-                    current_ref = ref
+            # Probe for marker presence on the first supporting page (fast only)
+            marker_present = False
+            try:
+                tag0, _x0 = _detect_marker_on_page(pdf, table_pages)
+                marker_present = bool(tag0)
+            except Exception:
+                marker_present = False
 
-                seq[ref] += 1
-                conf = float(decision.get("confidence", 0.0))
-                LOW = 0.55
-                title_i = f"Lampiran {ref} #{seq[ref]}"
-                with open(page_pdf, "rb") as fp:
-                    sdoc = SupportingDocument(
-                        main_document=doc,
-                        item_ref_code=ref,
-                        supporting_doc_sequence=seq[ref],
-                        title=title_i,
-                        company_name=cur.get("company") or company,
-                        section_index=cur["section_index"],
-                        row_index=cur["row_index"],
-                        status="draft",
-                        ai_auto_attached=True,
-                        ai_confidence=conf,
-                        ai_low_confidence=(conf < LOW),
-                    )
-                    sdoc.file.save(
-                        f"{doc.document_code}_S{cur['section_index']+1}R{cur['row_index']+1}_{seq[ref]}.pdf",
-                        File(fp),
-                        save=True,
-                    )
-                # Save preview image from the rendered page before cleanup
-                try:
-                    with open(page_png, "rb") as fp_img:
-                        sdoc.preview_image.save(
-                            f"{doc.document_code}_{ref}_{seq[ref]}.jpg",
-                            File(fp_img),
+            if marker_present:
+                # === Marker mode (fast path): stop detecting while counting ===
+                in_group = False
+                expected = 1
+                group_pages = 0
+                item_idx = 0
+
+                # Policy and OCR budget
+                alpha_plain_policy = os.environ.get("ALPHA_PLAIN_POLICY", "one").lower()  # 'one' or 'until_beta'
+                ocr_budget = int(os.environ.get("OCR_MARKER_BUDGET", "2"))
+
+                p = table_pages
+                while p < pdf.page_count and item_idx < total_items:
+                    # Render once per page when needed; reuse PNG for OCR and preview
+                    page_png = _save_page_image(pdf, p, dpi=144)
+
+                    if not in_group:
+                        # Fast text first; allow a tiny OCR probe window (first two supporting pages)
+                        tag, x = _detect_marker_on_page(pdf, p)
+                        if tag is None and (p - table_pages) < 2 and ocr_budget > 0:
+                            tag, x = _detect_from_existing_png(page_png)
+                            if tag:
+                                ocr_budget -= 1
+
+                        if tag == "ALPHA":
+                            # Start a new group for the current item
+                            ref = items_ctx[item_idx]["ref_code"] if item_idx < total_items else "UNASSIGNED"
+                            progress_update(
+                                job_id,
+                                20 + int(80 * item_idx / max(1, total_items)),
+                                f"Mulai isi dokumen pendukung: item {item_idx+1}/{total_items}",
+                                mode=mode,
+                                total_items=total_items,
+                                current_item=item_idx + 1,
+                            )
+
+                            # expected pages based on ALPHA-x; plain ALPHA via policy
+                            if isinstance(x, (int, str)) and str(x).isdigit():
+                                expected = int(x)
+                            else:
+                                expected = None if alpha_plain_policy == "until_beta" else 1
+                            in_group, group_pages = True, 0
+
+                            # Attach ALPHA page (reuse page_png)
+                            if ref not in seq:
+                                seq[ref] = 0
+                            seq[ref] += 1
+                            page_pdf = _save_single_page_pdf(pdf, p)
+                            title_i = f"Lampiran {ref} #{seq[ref]}"
+                            with open(page_pdf, "rb") as fp:
+                                sdoc = SupportingDocument(
+                                    main_document=doc,
+                                    item_ref_code=ref,
+                                    supporting_doc_sequence=seq[ref],
+                                    title=title_i,
+                                    company_name=items_ctx[item_idx].get("company") or company,
+                                    section_index=items_ctx[item_idx]["section_index"],
+                                    row_index=items_ctx[item_idx]["row_index"],
+                                    status="draft",
+                                    ai_auto_attached=True,
+                                    ai_confidence=1.0,
+                                    ai_low_confidence=False,
+                                )
+                                sdoc.file.save(
+                                    f"{doc.document_code}_S{items_ctx[item_idx]['section_index']+1}R{items_ctx[item_idx]['row_index']+1}_{seq[ref]}.pdf",
+                                    File(fp),
+                                    save=True,
+                                )
+                            try:
+                                with open(page_png, "rb") as fp_img:
+                                    sdoc.preview_image.save(
+                                        f"{doc.document_code}_{ref}_{seq[ref]}.jpg",
+                                        File(fp_img),
+                                        save=True,
+                                    )
+                            finally:
+                                try:
+                                    os.remove(page_png)
+                                except Exception:
+                                    pass
+                                try:
+                                    os.remove(page_pdf)
+                                except Exception:
+                                    pass
+                            attached += 1
+                            group_pages += 1
+
+                            # If only 1 page expected, close immediately
+                            if expected == 1:
+                                in_group = False
+                                item_idx += 1
+                                p += 1
+                                continue
+
+                            # Fast-path: attach the next (expected - 1) pages with no detection
+                            end = min(pdf.page_count, p + expected)
+                            q = p + 1
+                            while q < end:
+                                # render once, attach, reuse preview
+                                ref = items_ctx[item_idx]["ref_code"] if item_idx < total_items else "UNASSIGNED"
+                                if ref not in seq:
+                                    seq[ref] = 0
+                                seq[ref] += 1
+
+                                page_pdf = _save_single_page_pdf(pdf, q)
+                                page_png2 = _save_page_image(pdf, q, dpi=144)
+                                title_i = f"Lampiran {ref} #{seq[ref]}"
+                                with open(page_pdf, "rb") as fp:
+                                    sdoc2 = SupportingDocument(
+                                        main_document=doc,
+                                        item_ref_code=ref,
+                                        supporting_doc_sequence=seq[ref],
+                                        title=title_i,
+                                        company_name=items_ctx[item_idx].get("company") or company,
+                                        section_index=items_ctx[item_idx]["section_index"],
+                                        row_index=items_ctx[item_idx]["row_index"],
+                                        status="draft",
+                                        ai_auto_attached=True,
+                                        ai_confidence=1.0,
+                                        ai_low_confidence=False,
+                                    )
+                                    sdoc2.file.save(
+                                        f"{doc.document_code}_S{items_ctx[item_idx]['section_index']+1}R{items_ctx[item_idx]['row_index']+1}_{seq[ref]}.pdf",
+                                        File(fp),
+                                        save=True,
+                                    )
+                                try:
+                                    with open(page_png2, "rb") as fp_img:
+                                        sdoc2.preview_image.save(
+                                            f"{doc.document_code}_{ref}_{seq[ref]}.jpg",
+                                            File(fp_img),
+                                            save=True,
+                                        )
+                                finally:
+                                    try:
+                                        os.remove(page_png2)
+                                    except Exception:
+                                        pass
+                                    try:
+                                        os.remove(page_pdf)
+                                    except Exception:
+                                        pass
+                                attached += 1
+                                group_pages += 1
+                                q += 1
+
+                            # Close group and move to next item
+                            in_group = False
+                            item_idx += 1
+                            p = end
+                            continue
+
+                        # Not ALPHA → skip until first ALPHA
+                        p += 1
+                        try:
+                            os.remove(page_png)
+                        except Exception:
+                            pass
+                        continue
+
+                    # in_group without numeric x → only possible when policy == 'until_beta'
+                    tag, _ = _detect_marker_on_page(pdf, p)
+                    if tag is None and (group_pages in (5, 10)) and ocr_budget > 0:
+                        t2, _x2 = _detect_from_existing_png(page_png)
+                        if t2:
+                            tag = t2
+                            ocr_budget -= 1
+
+                    # Attach page
+                    ref = items_ctx[item_idx]["ref_code"] if item_idx < total_items else "UNASSIGNED"
+                    if ref not in seq:
+                        seq[ref] = 0
+                    seq[ref] += 1
+                    page_pdf = _save_single_page_pdf(pdf, p)
+                    title_i = f"Lampiran {ref} #{seq[ref]}"
+                    with open(page_pdf, "rb") as fp:
+                        sdoc = SupportingDocument(
+                            main_document=doc,
+                            item_ref_code=ref,
+                            supporting_doc_sequence=seq[ref],
+                            title=title_i,
+                            company_name=items_ctx[item_idx].get("company") or company,
+                            section_index=items_ctx[item_idx]["section_index"],
+                            row_index=items_ctx[item_idx]["row_index"],
+                            status="draft",
+                            ai_auto_attached=True,
+                            ai_confidence=1.0,
+                            ai_low_confidence=False,
+                        )
+                        sdoc.file.save(
+                            f"{doc.document_code}_S{items_ctx[item_idx]['section_index']+1}R{items_ctx[item_idx]['row_index']+1}_{seq[ref]}.pdf",
+                            File(fp),
                             save=True,
                         )
-                finally:
                     try:
-                        os.remove(page_png)
-                    except Exception:
-                        pass
-                os.remove(page_pdf)
-                attached += 1
-                # ⛔ removed old page-based progress updates
+                        with open(page_png, "rb") as fp_img:
+                            sdoc.preview_image.save(
+                                f"{doc.document_code}_{ref}_{seq[ref]}.jpg",
+                                File(fp_img),
+                                save=True,
+                            )
+                    finally:
+                        try:
+                            os.remove(page_png)
+                        except Exception:
+                            pass
+                        try:
+                            os.remove(page_pdf)
+                        except Exception:
+                            pass
+                    attached += 1
+                    group_pages += 1
+                    if tag == "BETA":
+                        in_group = False
+                        item_idx += 1
+                    p += 1
+            else:
+                # === Fallback: original GPT classification per page ===
+                current_ref = None
+                ptr = 0
+                for i, p in enumerate(range(table_pages, pdf.page_count), 1):
+                    page_pdf = _save_single_page_pdf(pdf, p)
+                    page_png = _save_page_image(pdf, p)
+                    decision = gpt_belongs_to_current(
+                        page_png,
+                        current_row=items_ctx[ptr],
+                        next_row=items_ctx[ptr + 1] if ptr + 1 < len(items_ctx) else None,
+                    )
+                    stay = bool(decision.get("stay", True))
+                    if not stay and ptr + 1 < len(items_ctx):
+                        ptr += 1
+                    cur = items_ctx[ptr]
+                    ref = cur["ref_code"]
+
+                    if ref != current_ref:
+                        item_idx = ptr
+                        pct = 20 + int(80 * item_idx / max(1, total_items))
+                        progress_update(
+                            job_id,
+                            pct,
+                            f"Mulai isi dokumen pendukung: item {item_idx+1}/{total_items}",
+                            mode=mode,
+                            total_items=total_items,
+                            current_item=item_idx + 1,
+                        )
+                        current_ref = ref
+
+                    seq[ref] += 1
+                    conf = float(decision.get("confidence", 0.0))
+                    LOW = 0.55
+                    title_i = f"Lampiran {ref} #{seq[ref]}"
+                    with open(page_pdf, "rb") as fp:
+                        sdoc = SupportingDocument(
+                            main_document=doc,
+                            item_ref_code=ref,
+                            supporting_doc_sequence=seq[ref],
+                            title=title_i,
+                            company_name=cur.get("company") or company,
+                            section_index=cur["section_index"],
+                            row_index=cur["row_index"],
+                            status="draft",
+                            ai_auto_attached=True,
+                            ai_confidence=conf,
+                            ai_low_confidence=(conf < LOW),
+                        )
+                        sdoc.file.save(
+                            f"{doc.document_code}_S{cur['section_index']+1}R{cur['row_index']+1}_{seq[ref]}.pdf",
+                            File(fp),
+                            save=True,
+                        )
+                    try:
+                        with open(page_png, "rb") as fp_img:
+                            sdoc.preview_image.save(
+                                f"{doc.document_code}_{ref}_{seq[ref]}.jpg",
+                                File(fp_img),
+                                save=True,
+                            )
+                    finally:
+                        try:
+                            os.remove(page_png)
+                        except Exception:
+                            pass
+                        os.remove(page_pdf)
+                    attached += 1
+                    # no per-page progress updates
         pdf.close()
 
     os.remove(tmp_path)
