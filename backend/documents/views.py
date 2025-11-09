@@ -71,19 +71,25 @@ class DocumentViewSet(viewsets.ModelViewSet):
     serializer_class = DocumentSerializer
     permission_classes = [IsAuthenticated]
 
-    def _all_rows_have_pay_ref(self, parsed_json: list[dict]) -> bool:
-        """Return False if any row lacks a PAY_REF value."""
-        for section in parsed_json or []:
-            tbl = section.get("table")
-            if not tbl:
+    def _all_items_have_payment_proof(self, doc: Document) -> bool:
+        """Every meaningful table row must have a PaymentProof; blank rows & summary sections ignored."""
+        proofs = set(doc.payment_proofs.values_list("section_index", "item_index"))
+        for s_idx, sec in enumerate(doc.parsed_json or []):
+            if isinstance(sec, dict) and "grand_total" in sec:
+                continue  # skip summary/grand total blocks
+            tbl = sec.get("table") or []
+            if not tbl or len(tbl) < 2:
                 continue
-            headers = tbl[0]
-            try:
-                pay_idx = headers.index("PAY_REF")
-            except ValueError:
-                return False  # column missing entirely
-            for row in tbl[1:]:
-                if len(row) <= pay_idx or not str(row[pay_idx]).strip():
+            hdr = tbl[0] or []
+            ref_i = hdr.index("REF_CODE") if "REF_CODE" in hdr else None
+            pay_i = hdr.index("PAY_REF") if "PAY_REF" in hdr else None
+            for r_idx, row in enumerate(tbl[1:]):
+                meaningful = any(
+                    str(v or "").strip() for i, v in enumerate(row) if i not in (ref_i, pay_i)
+                )
+                if not meaningful:
+                    continue
+                if (s_idx, r_idx) not in proofs:
                     return False
         return True
 
@@ -118,10 +124,10 @@ class DocumentViewSet(viewsets.ModelViewSet):
             doc.rejected_at = timezone.now()
 
         elif new_status == "sudah_dibayar":
-            # 🔒 ensure every row has PAY_REF
-            if not self._all_rows_have_pay_ref(doc.parsed_json):
+            # Require full PaymentProof coverage only
+            if not self._all_items_have_payment_proof(doc):
                 return Response(
-                    {"detail": "Semua item harus memiliki PAY_REF sebelum menyelesaikan pembayaran."},
+                    {"detail": "Semua item harus punya bukti pembayaran sebelum menyelesaikan pembayaran."},
                     status=drf_status.HTTP_400_BAD_REQUEST,
                 )
             doc.paid_at = timezone.now()
@@ -1038,14 +1044,27 @@ class PaymentProofViewSet(viewsets.ModelViewSet):
         # Replace existing proof if one exists, BUT lock after archive/paid
         main_doc = serializer.validated_data["main_document"]
         self._ensure_editable(main_doc)
-
         PaymentProof.objects.filter(
             main_document=main_doc,
             section_index=serializer.validated_data["section_index"],
             item_index=serializer.validated_data["item_index"],
         ).delete()
-
-        serializer.save()
+        proof: PaymentProof = serializer.save()
+        # Mirror proof.identifier into PAY_REF cell for matching row
+        pj = main_doc.parsed_json or []
+        if 0 <= proof.section_index < len(pj):
+            tbl = pj[proof.section_index].get("table")
+            if tbl and len(tbl) >= 2 and 0 <= proof.item_index < (len(tbl) - 1):
+                headers = tbl[0]
+                if "PAY_REF" not in headers:
+                    headers.append("PAY_REF")
+                pay_idx = headers.index("PAY_REF")
+                row = tbl[proof.item_index + 1]
+                if len(row) <= pay_idx:
+                    row.extend([""] * (pay_idx + 1 - len(row)))
+                row[pay_idx] = proof.identifier
+                main_doc.parsed_json = pj
+                main_doc.save(update_fields=["parsed_json"])
 
     def partial_update(self, request, *args, **kwargs):
         instance: PaymentProof = self.get_object()
@@ -1055,4 +1074,18 @@ class PaymentProofViewSet(viewsets.ModelViewSet):
     def destroy(self, request, *args, **kwargs):
         instance: PaymentProof = self.get_object()
         self._ensure_editable(instance.main_document)
+        # Clear mirrored PAY_REF when deleting a proof
+        doc = instance.main_document
+        pj = doc.parsed_json or []
+        if 0 <= instance.section_index < len(pj):
+            tbl = pj[instance.section_index].get("table")
+            if tbl and len(tbl) >= 2 and 0 <= instance.item_index < (len(tbl) - 1):
+                headers = tbl[0]
+                if "PAY_REF" in headers:
+                    pay_idx = headers.index("PAY_REF")
+                    row = tbl[instance.item_index + 1]
+                    if len(row) > pay_idx:
+                        row[pay_idx] = ""
+                    doc.parsed_json = pj
+                    doc.save(update_fields=["parsed_json"])
         return super().destroy(request, *args, **kwargs)

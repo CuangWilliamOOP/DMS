@@ -376,15 +376,21 @@ function DocumentTable({ documents, refreshDocuments }) {
 
   function hasMissingPaymentProof(docId, parsedSections) {
     const proofs = paymentProofs[docId] || [];
-    if (!parsedSections || !Array.isArray(parsedSections)) return true;
-    for (let s = 0; s < parsedSections.length; ++s) {
-      const section = parsedSections[s];
-      if (!section.table || section.hasOwnProperty('grand_total')) continue;
-      for (let r = 0; r < section.table.length - 1; ++r) {
-        const found = proofs.some(
-          (pf) => pf.section_index === s && pf.item_index === r
-        );
-        if (!found) return true;
+    if (!Array.isArray(parsedSections)) return true;
+    for (let s = 0; s < parsedSections.length; s++) {
+      const sec = parsedSections[s];
+      const tbl = sec?.table;
+      if (!tbl || sec.hasOwnProperty('grand_total')) continue; // skip summary/grand total objects
+      const header = tbl[0] || [];
+      const refIdx = header.indexOf('REF_CODE');
+      const payIdx = header.indexOf('PAY_REF');
+      const dataRows = tbl.slice(1);
+      for (let r = 0; r < dataRows.length; r++) {
+        const row = dataRows[r] || [];
+        const meaningful = row.some((v, i) => i !== refIdx && i !== payIdx && String(v || '').trim());
+        if (!meaningful) continue; // ignore blank lines
+        const covered = proofs.some((pf) => pf.section_index === s && pf.item_index === r);
+        if (!covered) return true;
       }
     }
     return false;
@@ -1500,10 +1506,13 @@ function DocumentTable({ documents, refreshDocuments }) {
           try {
             await API.patch(`/documents/${payDoneDoc.id}/`, { status: 'sudah_dibayar' });
             refreshDocuments();
-            // alert('Status berubah menjadi “Sudah Dibayar”.');
           } catch (err) {
             console.error(err);
-            // alert('Gagal menyelesaikan pembayaran.');
+            const msg =
+              err?.response?.data?.detail ||
+              err?.response?.data?.error ||
+              'Gagal menyelesaikan pembayaran.';
+            alert(msg);
           } finally {
             setPayDoneDlgOpen(false);
             setPayDoneDoc(null);

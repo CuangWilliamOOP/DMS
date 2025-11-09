@@ -491,8 +491,8 @@ export const PaymentCompleteDialog = ({ open, onClose, onConfirm }) => (
     <DialogTitle>Konfirmasi Selesaikan Pembayaran</DialogTitle>
     <DialogContent>
       <DialogContentText>
-        Semua item sudah memiliki <strong>PAY_REF</strong>. Klik “Selesaikan” untuk menandai
-        dokumen ini sebagai <em>Sudah Dibayar</em>. Tindakan ini tidak dapat dibatalkan.
+        Semua item sudah memiliki <strong>bukti pembayaran</strong>. Klik “Selesaikan” untuk
+        menandai dokumen ini sebagai <em>Sudah Dibayar</em>. Tindakan ini tidak dapat dibatalkan.
       </DialogContentText>
     </DialogContent>
     <DialogActions>
@@ -532,7 +532,7 @@ export const PaymentReferenceDialog = ({
           fullWidth
           autoFocus
           margin="dense"
-          label="PAY_REF"
+          label="Referensi Pembayaran (opsional)"
           value={refValue}
           onChange={(e) => setRefValue(e.target.value)}
         />
