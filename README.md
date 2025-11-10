@@ -389,3 +389,46 @@ sudo systemctl reload nginx
 * Convert `/api/parse-and-store/` to enqueue + 202.
 * Update progress UI to determinate circular with stage text and counts.
 * Commit Nginx and systemd configs to `infra/`.
+
+
+## Changelog — Image display efficiency (Nov 2025)
+
+### Summary
+
+We significantly reduced bytes and improved perceived performance for document previews:
+
+- Introduced a streamed preview endpoint that serves right-sized WebP/JPEG thumbnails with strong client caching.
+- Frontend now uses these thumbnails for images and PDFs; the original file is fetched only on demand (zoom/open).
+- Forced small previews for images by limiting responsive sizes to 480/640 widths.
+
+### Backend: streamed preview endpoint
+
+- Endpoint: `GET /api/sdoc/<id>/preview`
+- Query params:
+  - `w` (number): target width in pixels; clamped server-side to a maximum.
+  - `fmt` (string, optional): `webp` or `jpeg`. If omitted, format is negotiated via the request's `Accept` header with WebP preferred.
+- Behavior:
+  - For image sources: resizes to requested width and encodes to WebP (or JPEG fallback).
+  - For PDF sources: renders the first page and returns the resized thumbnail in the requested/negotiated format.
+  - Sends strong caching headers with `ETag`; clients will revalidate efficiently.
+
+Configuration notes:
+
+- Defaults are tuned for quality vs. size (e.g., max width ≈1200px, quality ≈75) and may be configured via environment if exposed in your settings.
+
+### Frontend: thumbnails, no reader by default
+
+- Images: `DocumentTableParts.jsx` now requests small thumbnails only (480w/640w) using `srcSet` and `sizes`. This avoids large downloads on initial paint.
+- PDFs: treated like images — we show a preview thumbnail from `/api/sdoc/<id>/preview?w=…` (no `<iframe>`). A button opens the original PDF in a new tab if needed.
+- Zoom: `react-medium-image-zoom` is configured with `data-zoom-src={doc.file}` so the original asset is fetched only when the user zooms.
+
+Developer tips:
+
+- You can explicitly request formats in the browser for sanity checks:
+  - `/api/sdoc/123/preview?w=640&fmt=webp`
+  - `/api/sdoc/123/preview?w=640&fmt=jpeg`
+- In DevTools Network tab, confirm only 480/640-size images are loaded while scrolled in the table; the original file should appear only on zoom or when clicking “Buka file asli/Buka PDF asli”.
+
+Known behavior:
+
+- For PDFs we preview the first page only in the table. Opening the original loads the full PDF in the browser.
