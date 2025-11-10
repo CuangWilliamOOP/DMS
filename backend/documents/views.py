@@ -2,6 +2,7 @@ import io
 import os
 import re
 import base64
+import hashlib
 import tempfile
 import logging
 import threading
@@ -9,10 +10,13 @@ import threading
 import fitz
 from PIL import Image, ImageDraw, ImageFont
 from django.conf import settings
+from PIL import ImageOps
 from django.contrib.auth import authenticate
 from django.core.files import File
 from django.http import JsonResponse
 from django.core.cache import cache
+from django.http import JsonResponse, HttpResponse
+from django.shortcuts import get_object_or_404
 from django.views.decorators.cache import never_cache
 from django.utils import timezone
 from rest_framework import status as drf_status, viewsets
@@ -254,7 +258,8 @@ class SupportingDocumentViewSet(viewsets.ModelViewSet):
             .first()
         )
         next_seq = latest.supporting_doc_sequence + 1 if latest else 1
-        serializer.save(item_ref_code=item_ref_code, supporting_doc_sequence=next_seq)
+        sdoc = serializer.save(item_ref_code=item_ref_code, supporting_doc_sequence=next_seq)
+        _ensure_preview_for_supporting_doc(sdoc)
 
     def partial_update(self, request, *args, **kwargs):
         instance: SupportingDocument = self.get_object()
@@ -311,13 +316,13 @@ class SupportingDocumentViewSet(viewsets.ModelViewSet):
             # regenerate preview from stamped PDF (first page)
             pdf = fitz.open(instance.file.path)
             pg = pdf[0]
-            pix = pg.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
-            fd, tmpjpg = tempfile.mkstemp(suffix=".jpg"); os.close(fd)
-            with open(tmpjpg, "wb") as f:
-                f.write(pix.tobytes("jpeg"))
-            with open(tmpjpg, "rb") as fp:
-                instance.preview_image.save(f"{base}_APPROVED_PREVIEW.jpg", File(fp), save=False)
-            os.remove(tmpjpg)
+            pix = pg.get_pixmap(matrix=fitz.Matrix(1.5, 1.5), alpha=False)
+            tmp_png = tempfile.mkstemp(suffix=".png")[1]
+            with open(tmp_png, "wb") as f:
+                f.write(pix.tobytes("png"))
+            fileobj, ext_prev = _encode_preview(tmp_png, f"{base}_APPROVED_PREVIEW")
+            instance.preview_image.save(f"{base}_APPROVED_PREVIEW{ext_prev}", fileobj, save=False)
+            os.remove(tmp_png)
         else:
             img = Image.open(file_path).convert("RGBA")
             stamp_layer = Image.new("RGBA", img.size, (255, 255, 255, 0))
@@ -367,6 +372,109 @@ def _save_page_image(pdf_doc, page_index: int, dpi: int = 160) -> str:
             f.write(pix.tobytes("jpeg"))
         logger.warning("PNG save failed on page %s, fell back to JPEG: %s", page_index, e)
         return path2
+
+# Preview encoder
+def _encode_preview(image_path, base_name):
+    max_w = int(getattr(settings, "PREVIEW_IMAGE_MAX_WIDTH", 1600))
+    quality = int(getattr(settings, "PREVIEW_IMAGE_QUALITY", 80))
+
+    im = Image.open(image_path).convert("RGB")
+    w, h = im.size
+    if w > max_w:
+        im = im.resize((max_w, int(h * (max_w / w))), Image.LANCZOS)
+
+    buf = io.BytesIO()
+    ext = ".webp"
+    try:
+        im.save(buf, "WEBP", quality=quality, method=6)
+    except Exception:
+        buf = io.BytesIO()
+        im.save(buf, "JPEG", quality=85, optimize=True, progressive=True)
+        ext = ".jpg"
+    buf.seek(0)
+    return File(buf), ext
+
+# --- On-the-fly preview (no server-side persistence) ---
+def _choose_fmt(accept: str):
+    a = (accept or "").lower()
+    if "image/webp" in a:
+        return "WEBP", "image/webp"
+    return "JPEG", "image/jpeg"
+
+def _open_as_pil(path: str) -> Image.Image:
+    ext = os.path.splitext(path)[1].lower()
+    if ext == ".pdf":
+        doc = fitz.open(path)
+        if doc.page_count == 0:
+            raise ValueError("Empty PDF")
+        pg = doc[0]
+        pix = pg.get_pixmap(matrix=fitz.Matrix(1.5, 1.5), alpha=False)
+        return Image.open(io.BytesIO(pix.tobytes("png"))).convert("RGB")
+    # auto-rotate based on EXIF
+    return ImageOps.exif_transpose(Image.open(path))
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def sdoc_preview(request, pk: int):
+    from .models import SupportingDocument
+    sd = get_object_or_404(SupportingDocument, pk=pk)
+    w = int(request.GET.get("w", 800))
+    w = max(200, min(w, 1600))
+    q = int(getattr(settings, "PREVIEW_IMAGE_QUALITY", 80))
+
+    img = _open_as_pil(sd.file.path).convert("RGB")
+    ow, oh = img.size
+    if ow > w:
+        img = img.resize((w, int(oh * (w / ow))), Image.LANCZOS)
+
+    fmt_q = (request.GET.get("fmt") or "").lower()
+    if fmt_q == "webp":
+        fmt, ctype = "WEBP", "image/webp"
+    elif fmt_q in ("jpg", "jpeg"):
+        fmt, ctype = "JPEG", "image/jpeg"
+    else:
+        fmt, ctype = _choose_fmt(request.META.get("HTTP_ACCEPT"))
+    buf = io.BytesIO()
+    if fmt == "WEBP":
+        img.save(buf, "WEBP", quality=q, method=6)
+    else:
+        img.save(buf, "JPEG", quality=q, optimize=True, progressive=True)
+    buf.seek(0)
+
+    stat = os.stat(sd.file.path)
+    etag = hashlib.sha1(f"{stat.st_mtime_ns}:{stat.st_size}:{w}:{fmt}:{q}".encode()).hexdigest()
+    if request.META.get("HTTP_IF_NONE_MATCH") == etag:
+        return HttpResponse(status=304)
+    resp = HttpResponse(buf.getvalue(), content_type=ctype)
+    resp["Cache-Control"] = "public, max-age=31536000, immutable"
+    resp["ETag"] = etag
+    resp["Vary"] = "Accept"
+    return resp
+
+def _ensure_preview_for_supporting_doc(instance: SupportingDocument):
+    """Create a resized WebP/JPEG preview if missing (idempotent)."""
+    try:
+        # Skip if preview already exists
+        if instance.preview_image and getattr(instance.preview_image, 'name', '').strip():
+            return
+        src = instance.file.path
+        base, ext = os.path.splitext(os.path.basename(src))
+        if ext.lower() == '.pdf':
+            pdf = fitz.open(src)
+            pg = pdf[0]
+            pix = pg.get_pixmap(matrix=fitz.Matrix(1.5, 1.5), alpha=False)
+            tmp = tempfile.mkstemp(suffix='.png')[1]
+            with open(tmp, 'wb') as f:
+                f.write(pix.tobytes('png'))
+            fileobj, ext_prev = _encode_preview(tmp, f"{base}_PREVIEW")
+            instance.preview_image.save(f"{base}_PREVIEW{ext_prev}", fileobj, save=False)
+            os.remove(tmp)
+        else:
+            fileobj, ext_prev = _encode_preview(src, f"{base}_PREVIEW")
+            instance.preview_image.save(f"{base}_PREVIEW{ext_prev}", fileobj, save=False)
+        instance.save(update_fields=['preview_image'])
+    except Exception as e:
+        logger.warning("preview generation failed for %s: %s", getattr(instance, 'id', '?'), e)
 
 def _is_rekap_header(hdr) -> bool:
     expected = ["no", "keterangan", "dibayar ke", "bank", "pengiriman"]
@@ -749,9 +857,10 @@ def parse_and_store_view(request):
                                 )
                             try:
                                 with open(page_png, "rb") as fp_img:
+                                    fileobj_pg, ext_pg = _encode_preview(page_png, f"{doc.document_code}_{ref}_{seq[ref]}")
                                     sdoc.preview_image.save(
-                                        f"{doc.document_code}_{ref}_{seq[ref]}.jpg",
-                                        File(fp_img),
+                                        f"{doc.document_code}_{ref}_{seq[ref]}{ext_pg}",
+                                        fileobj_pg,
                                         save=True,
                                     )
                             finally:
@@ -807,9 +916,10 @@ def parse_and_store_view(request):
                                     )
                                 try:
                                     with open(page_png2, "rb") as fp_img:
+                                        fileobj_pg2, ext_pg2 = _encode_preview(page_png2, f"{doc.document_code}_{ref}_{seq[ref]}")
                                         sdoc2.preview_image.save(
-                                            f"{doc.document_code}_{ref}_{seq[ref]}.jpg",
-                                            File(fp_img),
+                                            f"{doc.document_code}_{ref}_{seq[ref]}{ext_pg2}",
+                                            fileobj_pg2,
                                             save=True,
                                         )
                                 finally:
@@ -875,9 +985,10 @@ def parse_and_store_view(request):
                         )
                     try:
                         with open(page_png, "rb") as fp_img:
+                            fileobj_pg3, ext_pg3 = _encode_preview(page_png, f"{doc.document_code}_{ref}_{seq[ref]}")
                             sdoc.preview_image.save(
-                                f"{doc.document_code}_{ref}_{seq[ref]}.jpg",
-                                File(fp_img),
+                                f"{doc.document_code}_{ref}_{seq[ref]}{ext_pg3}",
+                                fileobj_pg3,
                                 save=True,
                             )
                     finally:
@@ -951,9 +1062,10 @@ def parse_and_store_view(request):
                         )
                     try:
                         with open(page_png, "rb") as fp_img:
+                            fileobj_pg4, ext_pg4 = _encode_preview(page_png, f"{doc.document_code}_{ref}_{seq[ref]}")
                             sdoc.preview_image.save(
-                                f"{doc.document_code}_{ref}_{seq[ref]}.jpg",
-                                File(fp_img),
+                                f"{doc.document_code}_{ref}_{seq[ref]}{ext_pg4}",
+                                fileobj_pg4,
                                 save=True,
                             )
                     finally:

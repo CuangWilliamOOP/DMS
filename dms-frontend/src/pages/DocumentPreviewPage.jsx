@@ -125,6 +125,19 @@ function PreviewTabs({ docsForRow, docId, docStatus, sectionIndex, itemIndex }) 
   );
 }
 
+function LazyPreviewTabs(props) {
+  const [visible, setVisible] = React.useState(false);
+  const ref = React.useRef(null);
+  React.useEffect(() => {
+    const io = new IntersectionObserver(([e]) => {
+      if (e.isIntersecting) { setVisible(true); io.disconnect(); }
+    }, { rootMargin: '300px' });
+    if (ref.current) io.observe(ref.current);
+    return () => io.disconnect();
+  }, []);
+  return <div ref={ref}>{visible ? <PreviewTabs {...props} /> : <div style={{height:520}} />}</div>;
+}
+
 export default function DocumentPreviewPage() {
   const { companyName, dirKey, docCode } = useParams();
   const navigate = useNavigate();
@@ -315,7 +328,7 @@ export default function DocumentPreviewPage() {
                               )}
                             </Box>
                             {/* --- Tabs for supporting/payment proof --- */}
-                            <PreviewTabs
+                            <LazyPreviewTabs
                               docsForRow={docsForRow}
                               docId={doc.id}
                               docStatus={doc.status}

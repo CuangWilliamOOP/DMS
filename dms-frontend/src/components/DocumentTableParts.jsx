@@ -144,26 +144,64 @@ export function ItemDocsPreview({
   const getExt = (name = '') => name.split('.').pop().toLowerCase();
   const renderFilePreview = (url, doc) => {
     if (!url) return <Typography>Tidak ada file.</Typography>;
+
     const ext = getExt(url);
-    if (['png', 'jpg', 'jpeg'].includes(ext)) {
+    const isImg = ['png', 'jpg', 'jpeg', 'webp'].includes(ext);
+
+    if (isImg) {
+      const base = (API?.defaults?.baseURL || '/api').replace(/\/$/, '');
+      const previewBase = doc?.id ? `${base}/sdoc/${doc.id}/preview` : null;
+      const sizes = '(max-width: 680px) 92vw, 640px';
+
+      // small preview, full-res only on zoom
+      const src = previewBase ? `${previewBase}?w=640&fmt=webp` : url;
+      const srcSet = previewBase
+        ? [
+            `${previewBase}?w=480&fmt=webp 480w`,
+            `${previewBase}?w=640&fmt=webp 640w`,
+          ].join(', ')
+        : undefined;
+
       return (
         <Box sx={{ textAlign: 'center' }}>
           <Zoom>
             <img
-              src={url}
+              src={src}
+              srcSet={srcSet}
+              sizes={sizes}
+              data-zoom-src={doc.file}
               alt="Dokumen Pendukung"
-              style={{ maxWidth: '100%', maxHeight: 400, cursor: 'zoom-in' }}
+              loading="lazy"
+              decoding="async"
+              style={{ maxWidth: '100%', maxHeight: 450, cursor: 'zoom-in' }}
             />
           </Zoom>
+          <Box sx={{ mt: 1 }}>
+            <Button size="small" href={doc.file} target="_blank" rel="noreferrer">
+              Buka file asli
+            </Button>
+          </Box>
         </Box>
       );
     }
-    // Prefer server preview if present (works on phones)
-    const preview = doc?.preview_image;
-    if (preview)
+
+    if (ext === 'pdf') {
+      const base = (API?.defaults?.baseURL || '/api').replace(/\/$/, '');
+      const prev = `${base}/sdoc/${doc.id}/preview?w=640`;
       return (
         <Box sx={{ textAlign: 'center' }}>
-          <img src={preview} alt="Preview" style={{ maxWidth: '100%', maxHeight: 450 }} />
+          <Zoom>
+            <img
+              src={prev}
+              srcSet={`${base}/sdoc/${doc.id}/preview?w=480 480w, ${base}/sdoc/${doc.id}/preview?w=640 640w, ${base}/sdoc/${doc.id}/preview?w=1200 1200w`}
+              sizes="(max-width: 600px) 92vw, 800px"
+              data-zoom-src={doc.file}        // fetch full PDF only on zoom/open
+              alt="PDF"
+              loading="lazy"
+              decoding="async"
+              style={{ maxWidth: '100%', maxHeight: 450, cursor: 'zoom-in', objectFit: 'contain' }}
+            />
+          </Zoom>
           <Box sx={{ mt: 1 }}>
             <Button size="small" href={doc.file} target="_blank" rel="noreferrer">
               Buka PDF asli
@@ -171,8 +209,7 @@ export function ItemDocsPreview({
           </Box>
         </Box>
       );
-    if (ext === 'pdf')
-      return <iframe title="PDF" src={url} style={{ width: '100%', height: 450 }} />;
+    }
     if (['xls', 'xlsx'].includes(ext))
       return (
         <iframe

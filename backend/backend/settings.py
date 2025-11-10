@@ -178,3 +178,7 @@ CACHES = {
         "KEY_PREFIX": "dms",
     }
 }
+
+# --- Preview encoding (optional) ---
+PREVIEW_IMAGE_MAX_WIDTH = int(os.environ.get("PREVIEW_IMAGE_MAX_WIDTH", "1200"))
+PREVIEW_IMAGE_QUALITY   = int(os.environ.get("PREVIEW_IMAGE_QUALITY", "75"))

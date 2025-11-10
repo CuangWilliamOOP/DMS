@@ -10,7 +10,8 @@ from documents.views import (
     login_view,
     user_info,
     UserSettingsView,
-    PaymentProofViewSet,  # <-- add this import
+    PaymentProofViewSet,
+    sdoc_preview,
 )
 from django.conf import settings
 from django.conf.urls.static import static
@@ -36,6 +37,7 @@ urlpatterns = [
     path('api/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
     path('api/me/', user_info),  # <-- add user_info endpoint
     path("api/user-settings/", UserSettingsView.as_view(), name="user_settings"),
+    path("api/sdoc/<int:pk>/preview", sdoc_preview, name="sdoc_preview"),
 ]
 
 # Serve media in development
