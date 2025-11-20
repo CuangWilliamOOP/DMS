@@ -1,60 +1,75 @@
 // File: src/components/SubHeaderTabs.jsx
-
 import React from 'react';
-import { Paper, Tabs, Tab, Badge } from '@mui/material';
+import { Tabs, Tab, Box } from '@mui/material';
 
-const badgeSx = {
-  '& .MuiBadge-badge': {
-    width: 16,
-    height: 16,
-    minWidth: 16,
-    fontSize: '0.55rem',
-    lineHeight: '16px',
-    borderRadius: '50%',
-    padding: 0,
-    top: -6,
-    right: -6,
-  },
-};
-
-function SubHeaderTabs({
-  tabValue,
-  onTabChange,
-  pendingCount = 0,
-  unpaidCount = 0,
-  favoriteCount = 0,
-}) {
+function SubHeaderTabs({ tabValue, onTabChange, pendingCount, unpaidCount }) {
   return (
-    <Paper sx={{ px: 1, pb: 1, mb: 2, pt: 0 }}>
+    <Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
       <Tabs
         value={tabValue}
         onChange={onTabChange}
+        variant="fullWidth"             // 2 tabs, equal width
         textColor="primary"
         indicatorColor="primary"
       >
         <Tab
+          value={0}
           label={
-            <Badge badgeContent={pendingCount} color="error" sx={badgeSx}>
-              Dokumen&nbsp;Belum&nbsp;Disetujui
-            </Badge>
+            <Box sx={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+              <span>DOKUMEN BELUM DISETUJUI</span>
+              {pendingCount > 0 && (
+                <Box
+                  sx={{
+                    ml: 1,
+                    width: 20,
+                    height: 20,
+                    borderRadius: '50%',
+                    bgcolor: '#e53935',
+                    color: '#fff',
+                    fontSize: 11,
+                    fontWeight: 600,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    lineHeight: 1,
+                  }}
+                >
+                  {pendingCount}
+                </Box>
+              )}
+            </Box>
           }
         />
         <Tab
+          value={1}
           label={
-            <Badge badgeContent={unpaidCount} color="error" sx={badgeSx}>
-              Dokumen&nbsp;Belum&nbsp;Dibayar
-            </Badge>
-          }
-        />
-        <Tab
-          label={
-            <Badge badgeContent={favoriteCount} color="secondary" sx={badgeSx}>
-              Favorit
-            </Badge>
+            <Box sx={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+              <span>DOKUMEN BELUM DIBAYAR</span>
+              {unpaidCount > 0 && (
+                <Box
+                  sx={{
+                    ml: 1,
+                    width: 20,
+                    height: 20,
+                    borderRadius: '50%',
+                    bgcolor: '#e53935',
+                    color: '#fff',
+                    fontSize: 11,
+                    fontWeight: 600,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    lineHeight: 1,
+                  }}
+                >
+                  {unpaidCount}
+                </Box>
+              )}
+            </Box>
           }
         />
       </Tabs>
-    </Paper>
+    </Box>
   );
 }
 
