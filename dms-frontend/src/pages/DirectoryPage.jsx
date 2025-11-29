@@ -1,6 +1,6 @@
 // File: src/pages/DirectoryPage.jsx
 
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import {
   Box,
   Grid,
@@ -26,54 +26,68 @@ import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
 import { motion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import { useTheme } from '@mui/material/styles';
+import API from '../services/api'; // NEW: use live data 
 
-// Static directory data (can be wired to API later)
-const companies = [
+// Static company metadata (UI-only; stats are filled dynamically)
+const BASE_COMPANIES = [
   {
+    code: 'asn',
     name: 'CV. ASN',
     type: 'CV',
     color: '#f97316',
     initials: 'ASN',
-    city: 'Jakarta',
-    segment: 'Notaris & Legal',
-    documentsCount: 32,
-    lastActivity: '2 hari lalu',
+    city: 'Pekanbaru',
+    segment: 'Kontraktor Alat Berat',
   },
   {
+    code: 'ttu',
     name: 'PT. TTU',
     type: 'PT',
     color: '#3b82f6',
     initials: 'TTU',
-    city: 'Jakarta',
-    segment: 'Holding',
-    documentsCount: 54,
-    lastActivity: 'Hari ini',
+    city: 'Pekanbaru',
+    segment: 'Kontraktor Alat Berat',
   },
   {
+    code: 'ols',
     name: 'PT. OLS',
     type: 'PT',
     color: '#22c55e',
     initials: 'OLS',
-    city: 'Bandung',
-    segment: 'Operasional',
-    documentsCount: 18,
-    lastActivity: '5 hari lalu',
+    city: 'Pekanbaru',
+    segment: 'Perkebunan Kelapa Sawit',
   },
   {
+    code: 'olm',
     name: 'PT. OLM',
     type: 'PT',
     color: '#a855f7',
     initials: 'OLM',
-    city: 'Surabaya',
-    segment: 'Manufaktur',
-    documentsCount: 9,
-    lastActivity: '1 minggu lalu',
+    city: 'Pekanbaru',
+    segment: 'Perkebunan Kelapa Sawit',
   },
 ];
 
 // Slug for routing: remove dots, collapse spaces to hyphen
 const slugify = (name) =>
   name.toLowerCase().replace(/\./g, '').replace(/\s+/g, '-').replace(/-+/g, '-');
+
+const MS_PER_DAY = 1000 * 60 * 60 * 24;
+
+function formatLastActivity(date) {
+  if (!date) return '-';
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffDays = Math.floor(diffMs / MS_PER_DAY);
+
+  if (diffDays <= 0) return 'Hari ini';
+  if (diffDays === 1) return '1 hari lalu';
+  if (diffDays < 7) return `${diffDays} hari lalu`;
+
+  const weeks = Math.round(diffDays / 7);
+  if (weeks <= 1) return '1 minggu lalu';
+  return `${weeks} minggu lalu`;
+}
 
 function DirectoryPage() {
   const theme = useTheme();
@@ -85,8 +99,80 @@ function DirectoryPage() {
   const [typeFilter, setTypeFilter] = useState('all');
   const [viewMode, setViewMode] = useState('grid');
 
+  // Dynamic company stats (start with zeros)
+  const [companies, setCompanies] = useState(
+    BASE_COMPANIES.map((c) => ({
+      ...c,
+      documentsCount: 0,
+      lastActivity: null,
+    }))
+  );
+
+  useEffect(() => {
+    const fetchStats = async () => {
+      try {
+        const res = await API.get('/documents/'); // includes archived + status etc. 
+        const docs = Array.isArray(res.data) ? res.data : [];
+
+        // Only count docs that are archived + already paid (same as CompanyDirectoryPage) 
+        const archivedDocs = docs.filter(
+          (d) => d.archived && d.status === 'sudah_dibayar'
+        );
+
+        const statsByCompany = {};
+
+        archivedDocs.forEach((doc) => {
+          const code = (doc.company || '').toLowerCase(); // 'asn', 'ttu', etc. 
+          if (!code) return;
+
+          if (!statsByCompany[code]) {
+            statsByCompany[code] = { count: 0, lastDate: null };
+          }
+          statsByCompany[code].count += 1;
+
+          const ts =
+            doc.archived_at ||
+            doc.paid_at ||
+            doc.updated_at ||
+            doc.created_at;
+          if (!ts) return;
+
+          const dt = new Date(ts);
+          if (!statsByCompany[code].lastDate || dt > statsByCompany[code].lastDate) {
+            statsByCompany[code].lastDate = dt;
+          }
+        });
+
+        setCompanies(
+          BASE_COMPANIES.map((base) => {
+            const stat = statsByCompany[base.code] || {
+              count: 0,
+              lastDate: null,
+            };
+            return {
+              ...base,
+              documentsCount: stat.count,
+              lastActivity:
+                stat.count === 0
+                  ? 'Belum ada dokumen'
+                  : formatLastActivity(stat.lastDate),
+            };
+          })
+        );
+      } catch (err) {
+        console.error('Error fetching directory stats:', err);
+        // On error, keep zeros and null lastActivity
+      }
+    };
+
+    fetchStats();
+  }, []);
+
   const totalCompanies = companies.length;
-  const totalDocuments = companies.reduce((sum, c) => sum + c.documentsCount, 0);
+  const totalDocuments = companies.reduce(
+    (sum, c) => sum + (c.documentsCount || 0),
+    0
+  );
 
   const filteredCompanies = useMemo(() => {
     const term = searchTerm.trim().toLowerCase();
@@ -109,7 +195,7 @@ function DirectoryPage() {
         return haystack.includes(term);
       })
       .sort((a, b) => a.name.localeCompare(b.name));
-  }, [searchTerm, typeFilter]);
+  }, [companies, searchTerm, typeFilter]);
 
   const handleCompanyClick = (company) => {
     navigate(`/directory/${slugify(company.name)}`);
@@ -129,7 +215,9 @@ function DirectoryPage() {
       ? `${filteredCompanies.length} perusahaan`
       : `${filteredCompanies.length} dari ${totalCompanies} perusahaan`;
 
-  const headerAccent = isDark ? 'rgba(90, 129, 255, 0.2)' : 'rgba(37, 99, 235, 0.08)';
+  const headerAccent = isDark
+    ? 'rgba(90, 129, 255, 0.2)'
+    : 'rgba(37, 99, 235, 0.08)';
 
   return (
     <>
@@ -172,8 +260,9 @@ function DirectoryPage() {
                 variant="body2"
                 sx={{ color: 'text.secondary', maxWidth: 540 }}
               >
-                Temukan seluruh dokumen yang sudah diselesaikan berdasarkan entitas
-                perusahaan. Gunakan pencarian dan filter untuk menyempitkan hasil.
+                Temukan seluruh dokumen yang sudah diselesaikan berdasarkan
+                entitas perusahaan. Gunakan pencarian dan filter untuk
+                menyempitkan hasil.
               </Typography>
             </Box>
 
@@ -185,7 +274,9 @@ function DirectoryPage() {
                 borderRadius: 3,
                 border: (t) =>
                   `1px solid ${
-                    t.palette.mode === 'dark' ? '#242b4f' : 'rgba(148, 163, 184, 0.35)'
+                    t.palette.mode === 'dark'
+                      ? '#242b4f'
+                      : 'rgba(148, 163, 184, 0.35)'
                   }`,
                 background: (t) =>
                   t.palette.mode === 'dark'
@@ -208,7 +299,10 @@ function DirectoryPage() {
                   <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
                     {totalCompanies}
                   </Typography>
-                  <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                  <Typography
+                    variant="caption"
+                    sx={{ color: 'text.secondary' }}
+                  >
                     Perusahaan
                   </Typography>
                 </Box>
@@ -217,7 +311,10 @@ function DirectoryPage() {
                   <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
                     {totalDocuments}
                   </Typography>
-                  <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                  <Typography
+                    variant="caption"
+                    sx={{ color: 'text.secondary' }}
+                  >
                     Dokumen diarsip
                   </Typography>
                 </Box>
@@ -240,7 +337,9 @@ function DirectoryPage() {
                 borderRadius: 3,
                 border: (t) =>
                   `1px solid ${
-                    t.palette.mode === 'dark' ? '#242b4f' : 'rgba(148, 163, 184, 0.35)'
+                    t.palette.mode === 'dark'
+                      ? '#242b4f'
+                      : 'rgba(148, 163, 184, 0.35)'
                   }`,
                 background: (t) =>
                   t.palette.mode === 'dark'
@@ -331,14 +430,14 @@ function DirectoryPage() {
                         icon={<FilterAltOutlinedIcon sx={{ fontSize: 16 }} />}
                         label="Semua"
                         onClick={() => setTypeFilter('all')}
-                        variant={typeFilter === 'all' ? 'filled' : 'outlined'}
+                        variant={
+                          typeFilter === 'all' ? 'filled' : 'outlined'
+                        }
                         sx={{
                           fontWeight: 500,
                           borderRadius: 999,
                           backgroundColor:
-                            typeFilter === 'all'
-                              ? headerAccent
-                              : 'transparent',
+                            typeFilter === 'all' ? headerAccent : 'transparent',
                         }}
                       />
                       <Chip
@@ -350,9 +449,7 @@ function DirectoryPage() {
                           fontWeight: 500,
                           borderRadius: 999,
                           backgroundColor:
-                            typeFilter === 'PT'
-                              ? headerAccent
-                              : 'transparent',
+                            typeFilter === 'PT' ? headerAccent : 'transparent',
                         }}
                       />
                       <Chip
@@ -364,9 +461,7 @@ function DirectoryPage() {
                           fontWeight: 500,
                           borderRadius: 999,
                           backgroundColor:
-                            typeFilter === 'CV'
-                              ? headerAccent
-                              : 'transparent',
+                            typeFilter === 'CV' ? headerAccent : 'transparent',
                         }}
                       />
                     </Stack>
@@ -482,15 +577,18 @@ function DirectoryPage() {
                   textAlign: 'center',
                 }}
               >
-                <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 0.5 }}>
+                <Typography
+                  variant="subtitle1"
+                  sx={{ fontWeight: 600, mb: 0.5 }}
+                >
                   Tidak ada perusahaan yang cocok
                 </Typography>
                 <Typography
                   variant="body2"
                   sx={{ color: 'text.secondary', mb: 1.5 }}
                 >
-                  Coba kurangi kata kunci, pilih tipe perusahaan berbeda, atau reset
-                  filter.
+                  Coba kurangi kata kunci, pilih tipe perusahaan berbeda, atau
+                  reset filter.
                 </Typography>
                 <IconButton
                   size="small"
@@ -579,7 +677,8 @@ function DirectoryPage() {
                             opacity: isDark ? 0.12 : 0.16,
                             background: `radial-gradient(circle at top, ${company.color} 0, transparent 60%)`,
                             transform: 'scale(1.02)',
-                            transition: 'transform 0.18s ease, opacity 0.18s ease',
+                            transition:
+                              'transform 0.18s ease, opacity 0.18s ease',
                             pointerEvents: 'none',
                           }}
                         />
@@ -631,8 +730,11 @@ function DirectoryPage() {
                               </Typography>
                               <Typography
                                 variant="caption"
-                                sx={{ color: 'text.secondary' }}
-                                noWrap
+                                sx={{
+                                  color: 'text.secondary',
+                                  lineHeight: 1.3,
+                                  display: 'block',
+                                }}
                               >
                                 {company.city} · {company.segment}
                               </Typography>
@@ -667,7 +769,12 @@ function DirectoryPage() {
                               gap: 1.5,
                             }}
                           >
-                            <Box sx={{ display: 'flex', flexDirection: 'column' }}>
+                            <Box
+                              sx={{
+                                display: 'flex',
+                                flexDirection: 'column',
+                              }}
+                            >
                               <Typography
                                 variant="body2"
                                 sx={{ fontWeight: 600, lineHeight: 1.2 }}
@@ -678,14 +785,18 @@ function DirectoryPage() {
                                 variant="caption"
                                 sx={{ color: 'text.secondary', mt: 0.25 }}
                               >
-                                Aktivitas terakhir: {company.lastActivity}
+                                Aktivitas terakhir:{' '}
+                                {company.documentsCount
+                                  ? company.lastActivity
+                                  : 'Belum ada dokumen'}
                               </Typography>
                             </Box>
                             <IconButton
                               size="small"
                               sx={{
                                 borderRadius: 999,
-                                border: '1px solid rgba(148, 163, 184, 0.8)',
+                                border:
+                                  '1px solid rgba(148, 163, 184, 0.8)',
                                 backgroundColor: 'rgba(15, 23, 42, 0.9)',
                               }}
                             >
@@ -786,8 +897,11 @@ function DirectoryPage() {
                             </Typography>
                             <Typography
                               variant="caption"
-                              noWrap
-                              sx={{ color: 'text.secondary' }}
+                              sx={{
+                                color: 'text.secondary',
+                                lineHeight: 1.3,
+                                display: 'block',
+                              }}
                             >
                               {company.city} · {company.segment}
                             </Typography>
@@ -813,14 +927,18 @@ function DirectoryPage() {
                               variant="caption"
                               sx={{ color: 'text.secondary' }}
                             >
-                              {company.type} · {company.lastActivity}
+                              {company.type} ·{' '}
+                              {company.documentsCount
+                                ? company.lastActivity
+                                : 'Belum ada dokumen'}
                             </Typography>
                           </Box>
                           <IconButton
                             size="small"
                             sx={{
                               borderRadius: 999,
-                              border: '1px solid rgba(148, 163, 184, 0.8)',
+                              border:
+                                '1px solid rgba(148, 163, 184, 0.8)',
                             }}
                           >
                             <ArrowForwardIcon sx={{ fontSize: 18 }} />

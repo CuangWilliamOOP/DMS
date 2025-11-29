@@ -1,3 +1,5 @@
+// File: src/components/SettingsDialog.jsx
+
 import React, { useState, useContext } from "react";
 import {
   Dialog,
@@ -16,16 +18,18 @@ import {
   FormControlLabel,
   FormControl,
   Avatar,
-  Collapse,
   MenuItem,
   Select,
   InputLabel,
+  Stack,
+  Chip,
 } from "@mui/material";
-import ChevronRightIcon from "@mui/icons-material/ChevronRight";
 import PaletteIcon from "@mui/icons-material/Palette";
 import PersonIcon from "@mui/icons-material/Person";
 import NotificationsIcon from "@mui/icons-material/NotificationsActive";
 import LockIcon from "@mui/icons-material/Lock";
+import DarkModeIcon from "@mui/icons-material/DarkMode";
+import LightModeIcon from "@mui/icons-material/LightMode";
 import { motion } from "framer-motion";
 import { ColorModeContext } from "../theme/ColorModeProvider";
 import API from "../services/api";
@@ -35,30 +39,35 @@ export default function PengaturanDialog({ open, onClose }) {
   const [notifEmail, setNotifEmail] = useState(
     localStorage.getItem("pref_notif_email") !== "false"
   );
-  const [openSection, setOpenSection] = useState("appearance"); // "appearance", "notifications", "security"
+  const [section, setSection] = useState("appearance"); // "appearance", "notifications", "security"
 
-  const simpan = async () => {
-    // Persist local-only preferences
+  const isDark = mode === "dark";
+
+  const simpan = () => {
     localStorage.setItem("pref_notif_email", notifEmail);
     onClose();
   };
 
   // Animated icon wrapper
   const AnimatedIcon = ({ children }) => (
-    <motion.div whileHover={{ scale: 1.15 }} whileTap={{ scale: 0.92 }}>
+    <motion.div whileHover={{ scale: 1.12 }} whileTap={{ scale: 0.92 }}>
       {children}
     </motion.div>
   );
 
-  // Helper avatar
+  // Colored round icon used in the left-side nav
   const ColoredIcon = ({ icon, color }) => (
-    <Avatar sx={{ bgcolor: color, width: 34, height: 34, boxShadow: 2 }}>
+    <Avatar
+      sx={{
+        bgcolor: color,
+        width: 34,
+        height: 34,
+        boxShadow: 2,
+      }}
+    >
       <AnimatedIcon>{icon}</AnimatedIcon>
     </Avatar>
   );
-
-  // Section toggler
-  const handleSection = (s) => setOpenSection(openSection === s ? "" : s);
 
   const options = [
     { label: "15 menit", value: 15 },
@@ -73,7 +82,9 @@ export default function PengaturanDialog({ open, onClose }) {
     const [idle, setIdle] = React.useState(60);
 
     React.useEffect(() => {
-      API.get("/user-settings/").then(({ data }) => setIdle(Number(data.idle_timeout)));
+      API.get("/user-settings/").then(({ data }) =>
+        setIdle(Number(data.idle_timeout))
+      );
     }, []);
 
     const handleChange = (e) => {
@@ -101,12 +112,17 @@ export default function PengaturanDialog({ open, onClose }) {
     );
   }
 
+  const handleThemeClick = (target) => {
+    // target: "light" or "dark"
+    toggleMode(target === "dark");
+  };
+
   return (
     <Dialog
       open={open}
       onClose={onClose}
       fullWidth
-      maxWidth="xs"
+      maxWidth="sm"
       PaperProps={{
         sx: (theme) => ({
           borderRadius: 4,
@@ -119,7 +135,7 @@ export default function PengaturanDialog({ open, onClose }) {
         }),
       }}
     >
-      {/* ————————————————— HEADER ————————————————— */}
+      {/* HEADER */}
       <DialogTitle
         sx={{
           fontWeight: 700,
@@ -152,7 +168,7 @@ export default function PengaturanDialog({ open, onClose }) {
         Pengaturan
       </DialogTitle>
 
-      {/* ————————————————— BODY ————————————————— */}
+      {/* BODY */}
       <DialogContent
         dividers
         sx={{
@@ -161,145 +177,292 @@ export default function PengaturanDialog({ open, onClose }) {
             theme.palette.mode === "dark" ? "#0f111a" : "transparent",
         }}
       >
-        {/* ============ TAMPILAN ============ */}
-        <List disablePadding>
-          <ListItemButton
-            onClick={() => handleSection("appearance")}
-            aria-expanded={openSection === "appearance"}
-            aria-controls="settings-appearance"
+        <Box
+          sx={{
+            px: 3,
+            py: 2.5,
+            display: "flex",
+            flexDirection: { xs: "column", sm: "row" },
+            gap: 3,
+          }}
+        >
+          {/* LEFT NAV */}
+          <Box
             sx={{
-              bgcolor: (theme) =>
-                openSection === "appearance"
-                  ? theme.palette.mode === "dark"
-                    ? "rgba(100,75,180,0.13)"
-                    : "rgba(123,31,162,0.05)"
-                  : "inherit",
+              width: { xs: "100%", sm: 230 },
+              mb: { xs: 1.5, sm: 0 },
             }}
           >
-            <ListItemIcon>
-              <ColoredIcon icon={<PaletteIcon />} color="#7b1fa2" />
-            </ListItemIcon>
-            <ListItemText
-              primary="Tampilan"
-              secondary={mode === "dark" ? "Mode Gelap" : "Mode Terang"}
-            />
-            <ChevronRightIcon
-              sx={{
-                transform: openSection === "appearance" ? "rotate(90deg)" : "none",
-                color: "#aaa",
-              }}
-            />
-          </ListItemButton>
-          <Collapse id="settings-appearance" in={openSection === "appearance"} timeout="auto" unmountOnExit>
-            <Box sx={{ pl: 8, py: 1.5 }}>
-              <FormControlLabel
-                control={
-                  <Switch
-                    color="primary"
-                    checked={mode === "dark"}
-                    onChange={async (e) => {
-                      const checked = e.target.checked;
-                      // Keep compatibility with current context API
-                      toggleMode(checked);
-                      try {
-                        await API.put("/user-settings/", {
-                          theme_mode: checked ? "dark" : "light",
-                        });
-                      } catch {}
-                      window.dispatchEvent(new Event("theme_update"));
+            <List disablePadding>
+              <ListItemButton
+                selected={section === "appearance"}
+                onClick={() => setSection("appearance")}
+                sx={{
+                  borderRadius: 2.5,
+                  mb: 0.75,
+                  "&.Mui-selected": {
+                    bgcolor: (theme) =>
+                      theme.palette.mode === "dark"
+                        ? "rgba(123,31,162,0.18)"
+                        : "rgba(123,31,162,0.06)",
+                  },
+                }}
+              >
+                <ListItemIcon>
+                  <ColoredIcon icon={<PaletteIcon />} color="#7b1fa2" />
+                </ListItemIcon>
+                <ListItemText
+                  primary="Tampilan"
+                  secondary={isDark ? "Mode gelap" : "Mode terang"}
+                />
+              </ListItemButton>
+
+              <ListItemButton
+                selected={section === "notifications"}
+                onClick={() => setSection("notifications")}
+                sx={{
+                  borderRadius: 2.5,
+                  mb: 0.75,
+                  "&.Mui-selected": {
+                    bgcolor: (theme) =>
+                      theme.palette.mode === "dark"
+                        ? "rgba(96,165,250,0.18)"
+                        : "rgba(59,130,246,0.06)",
+                  },
+                }}
+              >
+                <ListItemIcon>
+                  <ColoredIcon icon={<NotificationsIcon />} color="#1d4ed8" />
+                </ListItemIcon>
+                <ListItemText
+                  primary="Notifikasi"
+                  secondary={notifEmail ? "Email aktif" : "Email dimatikan"}
+                />
+              </ListItemButton>
+
+              <ListItemButton
+                selected={section === "security"}
+                onClick={() => setSection("security")}
+                sx={{
+                  borderRadius: 2.5,
+                  mb: 0.75,
+                  "&.Mui-selected": {
+                    bgcolor: (theme) =>
+                      theme.palette.mode === "dark"
+                        ? "rgba(22,163,74,0.18)"
+                        : "rgba(34,197,94,0.06)",
+                  },
+                }}
+              >
+                <ListItemIcon>
+                  <ColoredIcon icon={<LockIcon />} color="#16a34a" />
+                </ListItemIcon>
+                <ListItemText primary="Keamanan" secondary="Auto-logout" />
+              </ListItemButton>
+            </List>
+          </Box>
+
+          {/* VERTICAL DIVIDER (desktop) */}
+          <Divider
+            orientation="vertical"
+            flexItem
+            sx={{
+              display: { xs: "none", sm: "block" },
+              opacity: 0.15,
+            }}
+          />
+
+          {/* RIGHT CONTENT */}
+          <Box sx={{ flex: 1, minWidth: 0 }}>
+            {section === "appearance" && (
+              <Box sx={{ py: 1 }}>
+                <Typography
+                  variant="subtitle1"
+                  sx={{ fontWeight: 600, mb: 0.5 }}
+                >
+                  Tampilan
+                </Typography>
+                <Typography
+                  variant="body2"
+                  sx={{ color: "text.secondary", mb: 2 }}
+                >
+                  Pilih tema aplikasi yang paling nyaman untuk mata Anda.
+                </Typography>
+
+                <Stack
+                  direction={{ xs: "column", sm: "row" }}
+                  spacing={2}
+                >
+                  {/* Light mode card */}
+                  <Box
+                    onClick={() => handleThemeClick("light")}
+                    sx={{
+                      flex: 1,
+                      p: 2,
+                      borderRadius: 3,
+                      cursor: "pointer",
+                      border: isDark
+                        ? "1px solid rgba(148,163,184,0.4)"
+                        : "1px solid rgba(148,163,184,0.9)",
+                      background: !isDark
+                        ? "linear-gradient(135deg,#ffffff,#f3f4ff)"
+                        : "rgba(15,23,42,0.6)",
+                      boxShadow: !isDark
+                        ? "0 10px 30px rgba(148,163,184,0.35)"
+                        : "none",
+                      position: "relative",
                     }}
-                  />
-                }
-                label="Aktifkan mode gelap"
-              />
-            </Box>
-          </Collapse>
-          <Divider variant="inset" />
+                  >
+                    <Stack direction="row" spacing={1.5} alignItems="center">
+                      <Avatar sx={{ bgcolor: "#eff6ff", color: "#1d4ed8" }}>
+                        <LightModeIcon />
+                      </Avatar>
+                      <Box>
+                        <Typography
+                          variant="subtitle2"
+                          sx={{ fontWeight: 600 }}
+                        >
+                          Mode Terang
+                        </Typography>
+                        <Typography
+                          variant="body2"
+                          sx={{ color: "text.secondary", fontSize: 12 }}
+                        >
+                          Tampilan cerah, cocok untuk ruangan terang.
+                        </Typography>
+                      </Box>
+                      {!isDark && (
+                        <Chip
+                          size="small"
+                          color="primary"
+                          label="Aktif"
+                          sx={{ ml: "auto", borderRadius: 999 }}
+                        />
+                      )}
+                    </Stack>
+                  </Box>
 
-          {/* ============ NOTIFIKASI ============ */}
-          <ListItemButton
-            onClick={() => handleSection("notifications")}
-            aria-expanded={openSection === "notifications"}
-            aria-controls="settings-notifications"
-            sx={{
-              bgcolor: (theme) =>
-                openSection === "notifications"
-                  ? theme.palette.mode === "dark"
-                    ? "rgba(180,60,60,0.13)"
-                    : "rgba(198,40,40,0.05)"
-                  : "inherit",
-            }}
-          >
-            <ListItemIcon>
-              <ColoredIcon icon={<NotificationsIcon />} color="#c62828" />
-            </ListItemIcon>
-            <ListItemText primary="Notifikasi" secondary="Pengaturan Email" />
-            <ChevronRightIcon
-              sx={{
-                transform: openSection === "notifications" ? "rotate(90deg)" : "none",
-                color: "#aaa",
-              }}
-            />
-          </ListItemButton>
-          <Collapse id="settings-notifications" in={openSection === "notifications"} timeout="auto" unmountOnExit>
-            <Box sx={{ pl: 8, py: 1.5 }}>
-              <FormControlLabel
-                control={
-                  <Switch
-                    color="primary"
-                    checked={notifEmail}
-                    onChange={(e) => setNotifEmail(e.target.checked)}
-                  />
-                }
-                label="Terima notifikasi email"
-              />
-            </Box>
-          </Collapse>
-          <Divider variant="inset" />
+                  {/* Dark mode card */}
+                  <Box
+                    onClick={() => handleThemeClick("dark")}
+                    sx={{
+                      flex: 1,
+                      p: 2,
+                      borderRadius: 3,
+                      cursor: "pointer",
+                      border: isDark
+                        ? "1px solid rgba(129,140,248,0.7)"
+                        : "1px solid rgba(148,163,184,0.6)",
+                      background: isDark
+                        ? "linear-gradient(135deg,#020617,#111827)"
+                        : "linear-gradient(135deg,#0f172a,#111827)",
+                      boxShadow: "0 14px 36px rgba(15,23,42,0.8)",
+                      color: "#e5e7eb",
+                      position: "relative",
+                    }}
+                  >
+                    <Stack direction="row" spacing={1.5} alignItems="center">
+                      <Avatar sx={{ bgcolor: "#020617", color: "#facc15" }}>
+                        <DarkModeIcon />
+                      </Avatar>
+                      <Box>
+                        <Typography
+                          variant="subtitle2"
+                          sx={{ fontWeight: 600 }}
+                        >
+                          Mode Gelap
+                        </Typography>
+                        <Typography
+                          variant="body2"
+                          sx={{
+                            color: "rgba(209,213,219,0.85)",
+                            fontSize: 12,
+                          }}
+                        >
+                          Kontras rendah, nyaman digunakan malam hari.
+                        </Typography>
+                      </Box>
+                      {isDark && (
+                        <Chip
+                          size="small"
+                          color="primary"
+                          label="Aktif"
+                          sx={{ ml: "auto", borderRadius: 999 }}
+                        />
+                      )}
+                    </Stack>
+                  </Box>
+                </Stack>
+              </Box>
+            )}
 
-          {/* ============ KEAMANAN ============ */}
-          <ListItemButton
-            onClick={() => handleSection("security")}
-            aria-expanded={openSection === "security"}
-            aria-controls="settings-security"
-            sx={{
-              bgcolor: (theme) =>
-                openSection === "security"
-                  ? theme.palette.mode === "dark"
-                    ? "rgba(46,125,50,0.13)"
-                    : "rgba(46,125,50,0.07)"
-                  : "inherit",
-            }}
-          >
-            <ListItemIcon>
-              <ColoredIcon icon={<LockIcon />} color="#2e7d32" />
-            </ListItemIcon>
-            <ListItemText primary="Keamanan" secondary="Auto logout" />
-            <ChevronRightIcon
-              sx={{
-                transform: openSection === "security" ? "rotate(90deg)" : "none",
-                color: "#aaa",
-              }}
-            />
-          </ListItemButton>
-          <Collapse id="settings-security" in={openSection === "security"} timeout="auto" unmountOnExit>
-            <Box sx={{ pl: 8, py: 1.5 }}>
-              {/* Single source of truth: Select that PUTs to /user-settings/ */}
-              <KeamananTab />
-            </Box>
-          </Collapse>
-        </List>
+            {section === "notifications" && (
+              <Box sx={{ py: 1 }}>
+                <Typography
+                  variant="subtitle1"
+                  sx={{ fontWeight: 600, mb: 0.5 }}
+                >
+                  Notifikasi
+                </Typography>
+                <Typography
+                  variant="body2"
+                  sx={{ color: "text.secondary", mb: 2 }}
+                >
+                  Atur apakah Anda ingin menerima email ketika status dokumen
+                  berubah.
+                </Typography>
+
+                <FormControlLabel
+                  control={
+                    <Switch
+                      color="primary"
+                      checked={notifEmail}
+                      onChange={(e) => setNotifEmail(e.target.checked)}
+                    />
+                  }
+                  label="Terima notifikasi email"
+                />
+              </Box>
+            )}
+
+            {section === "security" && (
+              <Box sx={{ py: 1 }}>
+                <Typography
+                  variant="subtitle1"
+                  sx={{ fontWeight: 600, mb: 0.5 }}
+                >
+                  Keamanan
+                </Typography>
+                <Typography
+                  variant="body2"
+                  sx={{ color: "text.secondary", mb: 2 }}
+                >
+                  Atur berapa lama aplikasi tetap aktif sebelum logout otomatis.
+                </Typography>
+                <KeamananTab />
+              </Box>
+            )}
+          </Box>
+        </Box>
       </DialogContent>
 
-      {/* ————————————————— FOOTER ————————————————— */}
+      {/* FOOTER */}
       <DialogActions sx={{ px: 3, py: 2 }}>
-        <Button onClick={onClose} variant="outlined" sx={{ textTransform: "none", borderRadius: 2 }}>
+        <Button
+          onClick={onClose}
+          variant="outlined"
+          sx={{ textTransform: "none", borderRadius: 2 }}
+        >
           Batal
         </Button>
         <Button
           onClick={simpan}
           variant="contained"
-          sx={{ textTransform: "none", borderRadius: 2, background: "linear-gradient(90deg, #1976d2, #7e57c2)" }}
+          sx={{
+            textTransform: "none",
+            borderRadius: 2,
+            background: "linear-gradient(90deg, #1976d2, #7e57c2)",
+          }}
         >
           Simpan
         </Button>
