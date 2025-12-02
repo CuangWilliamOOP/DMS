@@ -51,8 +51,8 @@ const sortBySeq = (arr = []) =>
 
 const DOC_TYPE_LABELS = {
   ledger_lokasi: 'Ledger per Lokasi',
-  tagihan_pekerjaan: 'Tagihan Pekerjaan (BAPP)',
-  pembayaran_pekerjaan: 'Pembayaran Pekerjaan (BAPP)',
+  tagihan_pekerjaan: 'Tagihan Pekerjaan',
+  pembayaran_pekerjaan: 'Pembayaran Pekerjaan',
   pembelian_sparepart: 'Pembelian Sparepart',
   penggantian_kas_kantor: 'Penggantian Kas Kantor',
   biaya_pengeluaran_proyek: 'Biaya Pengeluaran Proyek',
@@ -77,15 +77,15 @@ const STATUS_CHIP_STYLES = {
 const COMPANY_NAME_BY_SLUG = {
   'cv-asn': 'CV. Alam Subur Nusantara',
   'pt-ttu': 'PT. Tunggal Tunggul Unggul',
-  'pt-ols': 'PT. OLS',
-  'pt-olm': 'PT. OLM',
+  'pt-ols': 'PT. Ostor Lumbanbanjar Sejahtera',
+  'pt-olm': 'PT. Ostor Lumbanbanjar Makmur',
 };
 
 const COMPANY_NAME_BY_CODE = {
   ttu: 'PT. Tunggal Tunggul Unggul',
   asn: 'CV. Alam Subur Nusantara',
-  ols: 'PT. OLS',
-  olm: 'PT. OLM',
+  ols: 'PT. Ostor Lumbanbanjar Sejahtera',
+  olm: 'PT. Ostor Lumbanbanjar Makmur',
 };
 
 // ----- Per-row tabs (Dokumen Pendukung / Bukti Pembayaran) -------------

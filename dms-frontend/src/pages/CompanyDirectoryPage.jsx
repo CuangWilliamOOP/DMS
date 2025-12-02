@@ -587,11 +587,13 @@ export default function CompanyDirectoryPage() {
                   xs={12}
                   md={6}
                   key={doc.id || doc.document_code || index}
+                  sx={{ display: 'flex' }}
                 >
                   <motion.div
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.04 * index, duration: 0.25 }}
+                    style={{ width: '100%', display: 'flex' }}
                   >
                     <Paper
                       className="doc-card"
@@ -629,6 +631,10 @@ export default function CompanyDirectoryPage() {
                           outlineColor: highlight,
                           outlineOffset: 2,
                         },
+                        // equal height card flex layout
+                        height: '100%',
+                        display: 'flex',
+                        flexDirection: 'column',
                       }}
                       role="button"
                       tabIndex={0}
@@ -765,20 +771,22 @@ export default function CompanyDirectoryPage() {
                             </Typography>
                           </Box>
 
-                          {doc.description && (
-                            <Typography
-                              variant="body2"
-                              sx={{
-                                color: isDark ? '#e5e7eb' : '#374151',
-                                display: '-webkit-box',
-                                WebkitLineClamp: 2,
-                                WebkitBoxOrient: 'vertical',
-                                overflow: 'hidden',
-                              }}
-                            >
-                              {doc.description}
-                            </Typography>
-                          )}
+                          <Box sx={{ mt: 0.75, minHeight: 40 }}>
+                            {doc.description && (
+                              <Typography
+                                variant="body2"
+                                sx={{
+                                  color: isDark ? '#e5e7eb' : '#374151',
+                                  display: '-webkit-box',
+                                  WebkitLineClamp: 2,
+                                  WebkitBoxOrient: 'vertical',
+                                  overflow: 'hidden',
+                                }}
+                              >
+                                {doc.description}
+                              </Typography>
+                            )}
+                          </Box>
                         </Box>
                       </Box>
                     </Paper>

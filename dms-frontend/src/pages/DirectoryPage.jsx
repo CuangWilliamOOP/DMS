@@ -732,8 +732,10 @@ function DirectoryPage() {
                                 variant="caption"
                                 sx={{
                                   color: 'text.secondary',
-                                  lineHeight: 1.3,
-                                  display: 'block',
+                                  display: '-webkit-box',
+                                  WebkitLineClamp: 2,
+                                  WebkitBoxOrient: 'vertical',
+                                  overflow: 'hidden',
                                 }}
                               >
                                 {company.city} · {company.segment}
