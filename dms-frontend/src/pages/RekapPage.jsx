@@ -62,12 +62,17 @@ function RekapPage() {
 
   const handleRowClick = (rowIndex) => {
     if (!rekap || !rekap.meta || !rekap.meta[rowIndex]) return;
-    const { document_code, section_index, row_index } = rekap.meta[rowIndex];
+    const { document_code, section_index, row_index, ref_code } = rekap.meta[rowIndex];
 
     if (!document_code) return;
 
+    const params = new URLSearchParams();
+    params.set('section', section_index);
+    params.set('row', row_index);
+    if (ref_code) params.set('ref', ref_code);
+
     navigate(
-      `/directory/${slug}/qlola/preview/${document_code}?section=${section_index}&row=${row_index}`
+      `/directory/${slug}/qlola/preview/${document_code}?${params.toString()}`
     );
   };
 

@@ -1418,6 +1418,12 @@ def rekap_view(request, company_code: str, rekap_key: str):
                 # Without KETERANGAN we can't classify BBM, skip this section
                 continue
 
+            # Lookup REF_CODE column index if present
+            try:
+                ref_idx = header.index("REF_CODE")
+            except ValueError:
+                ref_idx = None
+
             dby_idx = header_lower.index("dibayar ke") if "dibayar ke" in header_lower else None
             bank_idx = header_lower.index("bank") if "bank" in header_lower else None
             ship_idx = header_lower.index("pengiriman") if "pengiriman" in header_lower else None
@@ -1449,21 +1455,27 @@ def rekap_view(request, company_code: str, rekap_key: str):
 
                 rows.append(
                     [
-                        _format_date_long_id(tgl_pengajuan),            # Tanggal Pengajuan
-                        _format_date_long_id(tgl_masuk),                # Tanggal Masuk
-                        doc.document_code,                              # Kode Dokumen
-                        ket_singkat or keterangan,                      # Keterangan singkat
-                        dibayar_ke,                                     # Dibayar ke
-                        jumlah_liter,                                   # Jumlah Liter (int)
-                        nominal,                                        # Nominal (Rp)
+                        _format_date_long_id(tgl_pengajuan),  # Tanggal Pembayaran (using created_at)
+                        _format_date_long_id(tgl_masuk),      # Tanggal Masuk
+                        doc.document_code,                    # Kode Dokumen
+                        ket_singkat or keterangan,            # Keterangan singkat
+                        dibayar_ke,                           # Dibayar ke
+                        jumlah_liter,                         # Jumlah Liter (int)
+                        nominal,                               # Nominal (Rp)
                     ]
                 )
+
+                # Grab REF_CODE if available so frontend can anchor precisely
+                ref_code = None
+                if ref_idx is not None and ref_idx < len(row):
+                    ref_code = row[ref_idx]
 
                 meta_rows.append(
                     {
                         "document_code": doc.document_code,
                         "section_index": s_idx,
                         "row_index": r_idx,
+                        "ref_code": ref_code,
                     }
                 )
 
@@ -1476,7 +1488,7 @@ def rekap_view(request, company_code: str, rekap_key: str):
         "total_rows": len(rows),
         "total_amount": total_amount,
         "columns": [
-            "Tanggal Pengajuan",
+            "Tanggal Pembayaran",
             "Tanggal Masuk",
             "Kode Dokumen",
             "Keterangan",

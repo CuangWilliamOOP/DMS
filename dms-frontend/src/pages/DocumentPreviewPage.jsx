@@ -230,25 +230,61 @@ export default function DocumentPreviewPage() {
     const qs = new URLSearchParams(location.search);
     const s = qs.get('section');
     const r = qs.get('row');
+    const ref = qs.get('ref');
 
     if (s !== null && r !== null) {
       const si = Number(s);
       const ri = Number(r);
       if (Number.isFinite(si) && Number.isFinite(ri)) {
-        setHighlight({ sectionIndex: si, rowIndex: ri });
+        setHighlight({
+          sectionIndex: si,
+          rowIndex: ri,
+          refCode: ref || null,
+        });
       }
+    } else if (ref) {
+      // Fallback path if someday we only pass refCode
+      setHighlight({
+        sectionIndex: null,
+        rowIndex: null,
+        refCode: ref,
+      });
     }
   }, [location.search]);
 
   // Auto-scroll to the highlighted row once doc + DOM are ready
   useEffect(() => {
-    if (highlight && highlightedRef.current) {
-      highlightedRef.current.scrollIntoView({
+    // Need a highlight, document loaded, and not in loading state
+    if (!highlight || loading || !doc) return;
+
+    const scrollToHighlighted = () => {
+      const el = highlightedRef.current;
+      if (!el) return;
+
+      const rect = el.getBoundingClientRect();
+      const scrollTop =
+        window.pageYOffset || document.documentElement.scrollTop || 0;
+
+      // Offset to keep the row nicely below the fixed TopBar + page padding
+      const OFFSET = 140; // tweak if needed
+
+      const targetY = Math.max(rect.top + scrollTop - OFFSET, 0);
+
+      window.scrollTo({
+        top: targetY,
         behavior: 'smooth',
-        block: 'center',
       });
-    }
-  }, [highlight, doc]);
+    };
+
+    // Run once right after layout, and again shortly after in case of image/lazy-load shifts
+    const rafId = window.requestAnimationFrame(scrollToHighlighted);
+    const timeoutId = window.setTimeout(scrollToHighlighted, 400);
+
+    return () => {
+      window.cancelAnimationFrame(rafId);
+      window.clearTimeout(timeoutId);
+    };
+  }, [highlight, loading, doc]);
 
   // Fetch document + supporting docs
   useEffect(() => {
@@ -603,20 +639,32 @@ export default function DocumentPreviewPage() {
                     <Stack spacing={1.5}>
                       {rows.map((row, rowIndex) => {
                         const [, keterangan, dibayarKe, bank, pengiriman] = row;
+
                         const payRef =
                           payIdx !== -1 && row.length > payIdx
                             ? String(row[payIdx]).trim()
                             : '';
+
+                        // REF_CODE is our stable per-row anchor
+                        const refIdx = headerRow.indexOf('REF_CODE');
+                        const rowRefCode =
+                          refIdx !== -1 && row.length > refIdx
+                            ? String(row[refIdx]).trim()
+                            : '';
+
                         const docsForRow = support.filter(
                           (d) =>
                             d.section_index === sectionIndex &&
                             d.row_index === rowIndex
                         );
 
+                        // Prefer refCode (stable anchor). Fall back to section/row if no refCode.
                         const isHighlighted =
-                          highlight &&
-                          highlight.sectionIndex === sectionIndex &&
-                          highlight.rowIndex === rowIndex;
+                          !!highlight &&
+                          (highlight.refCode
+                            ? highlight.refCode === rowRefCode
+                            : highlight.sectionIndex === sectionIndex &&
+                              highlight.rowIndex === rowIndex);
 
                         return (
                           <Box
