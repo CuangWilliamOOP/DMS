@@ -9,7 +9,6 @@ import {
   CircularProgress,
   Grid,
   Paper,
-  IconButton,
   Button,
   Chip,
   TextField,
@@ -19,14 +18,11 @@ import {
 } from '@mui/material';
 import FolderOpenIcon from '@mui/icons-material/FolderOpen';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
-import DeleteIcon from '@mui/icons-material/Delete';
 import DescriptionOutlinedIcon from '@mui/icons-material/DescriptionOutlined';
 import SearchIcon from '@mui/icons-material/Search';
 import SortIcon from '@mui/icons-material/Sort';
-import { motion } from 'framer-motion';
 import { useParams, useNavigate, Link as RouterLink } from 'react-router-dom';
 import API from '../services/api';
-import { useTheme } from '@mui/material/styles';
 
 // ————————————————————————————————————————————————————————————
 // Helpers
@@ -42,10 +38,29 @@ const companyFullNames = {
   'pt-olm': 'PT. OLM',
 };
 
+// Two high-level "folders" per company
 const directories = [
-  { key: 'qlola', label: 'Transaksi QLOLA', color: '#90caf9', docTypeFilter: 'tagihan_pekerjaan' },
-  { key: 'internal', label: 'Transaksi Internal', color: '#a5d6a7', docTypeFilter: 'tagihan_internal' },
-  { key: 'lain', label: 'Dokumen Lain', color: '#ffcc80', docTypeFilter: 'lainnya' },
+  {
+    key: 'qlola',
+    label: 'Transaksi QLOLA',
+    color: '#90caf9',
+    docTypeFilter: 'tagihan_pekerjaan',
+  },
+  {
+    key: 'rekap',
+    label: 'Rekap',
+    color: '#fbbf24',
+    docTypeFilter: null, // virtual folder, no direct doc_type
+  },
+];
+
+// Files inside the Rekap folder
+const REKAP_FILES = [
+  {
+    key: 'bbm',
+    label: 'Rekap BBM',
+    description: 'Semua transaksi BBM (BBM/solar) yang diambil dari Transaksi QLOLA.',
+  },
 ];
 
 const breadcrumbSx = {
@@ -74,8 +89,6 @@ const formatDate = (dt) =>
 export default function CompanyDirectoryPage() {
   const { companyName, dirKey } = useParams();
   const navigate = useNavigate();
-  const theme = useTheme();
-  const isDark = theme.palette.mode === 'dark';
 
   // Normalize the slug param to be safe (mirrors DirectoryPage)
   const slug = slugify(companyName || '');
@@ -87,8 +100,10 @@ export default function CompanyDirectoryPage() {
   const [docSearch, setDocSearch] = useState('');
   const [docSort, setDocSort] = useState('newest'); // 'newest' | 'oldest'
 
+  // Fetch archived, sudah_dibayar documents for this company
   useEffect(() => {
     const fetchDocs = async () => {
+      setLoading(true);
       try {
         const res = await API.get('/documents/');
         const companyCode = slug.replace(/^pt-/, '').replace(/^cv-/, '');
@@ -102,25 +117,35 @@ export default function CompanyDirectoryPage() {
         setLoading(false);
       }
     };
-    fetchDocs();
+    if (slug) {
+      fetchDocs();
+    }
   }, [slug]);
 
-  const docsToDisplay = selectedDir
-    ? allDocs.filter((d) => d.doc_type === selectedDir.docTypeFilter)
-    : [];
+  // Docs to show for the current directory (only for real doc folders)
+  const docsToDisplay = useMemo(() => {
+    if (!selectedDir || !selectedDir.docTypeFilter) return [];
+    return allDocs.filter((d) => d.doc_type === selectedDir.docTypeFilter);
+  }, [allDocs, selectedDir]);
 
+  // Count per directory (Rekap will always be 0, since it's virtual)
   const directoryCounts = useMemo(() => {
     const counts = {};
     directories.forEach((dir) => {
-      counts[dir.key] = allDocs.filter((d) => d.doc_type === dir.docTypeFilter).length;
+      if (dir.docTypeFilter) {
+        counts[dir.key] = allDocs.filter((d) => d.doc_type === dir.docTypeFilter).length;
+      } else {
+        counts[dir.key] = 0;
+      }
     });
     return counts;
   }, [allDocs]);
 
+  // Apply search + sort for document view
   const visibleDocs = useMemo(() => {
-    if (!selectedDir) return [];
-    const term = docSearch.trim().toLowerCase();
+    if (!selectedDir || !selectedDir.docTypeFilter) return [];
 
+    const term = docSearch.trim().toLowerCase();
     let docs = docsToDisplay;
 
     if (term) {
@@ -144,28 +169,6 @@ export default function CompanyDirectoryPage() {
     return docs;
   }, [docsToDisplay, docSearch, docSort, selectedDir]);
 
-  const handleDelete = async (docId) => {
-    if (window.confirm('Yakin ingin menghapus dokumen ini?')) {
-      try {
-        await API.delete(`/documents/${docId}/`);
-        setAllDocs((prevDocs) => prevDocs.filter((doc) => doc.id !== docId));
-        alert('Dokumen berhasil dihapus.');
-      } catch (error) {
-        console.error(error);
-        alert('Terjadi kesalahan saat menghapus dokumen.');
-      }
-    }
-  };
-
-  const companyCode = slug.replace(/^pt-/, '').replace(/^cv-/, '').toUpperCase();
-  const hasOwnerRole = localStorage.getItem('role') === 'owner';
-
-  const highlight = isDark ? '#8fb1ff' : '#1e5bb8';
-
-  const handleSortToggle = (_event, value) => {
-    if (value) setDocSort(value);
-  };
-
   const handleDirectoryClick = (dir) => {
     navigate(`/directory/${slug}/${dir.key}`);
   };
@@ -174,31 +177,29 @@ export default function CompanyDirectoryPage() {
     navigate(`/directory/${slug}`);
   };
 
+  const handleSortToggle = (_event, value) => {
+    if (value) {
+      setDocSort(value);
+    }
+  };
+
+  const companyCode = slug.replace(/^pt-/, '').replace(/^cv-/, '');
+
   return (
     <Box
       sx={{
         minHeight: '100vh',
         px: { xs: 1.5, sm: 3, md: 6 },
         py: { xs: 3, sm: 4 },
-        mt: 0,
-        position: 'relative',
       }}
     >
-      {/* Breadcrumb */}
+      {/* Breadcrumbs */}
       <Breadcrumbs sx={breadcrumbSx} separator=">">
-        <Link component={RouterLink} underline="hover" to="/directory">
+        <Link component={RouterLink} underline="hover" color="inherit" to="/directory">
           Direktori
         </Link>
-        {selectedDir ? (
-          <Link component={RouterLink} underline="hover" to={`/directory/${slug}`}>
-            {fullName}
-          </Link>
-        ) : (
-          <Typography color="text.primary">{fullName}</Typography>
-        )}
-        {selectedDir && (
-          <Typography color="text.primary">{selectedDir.label}</Typography>
-        )}
+        <Typography color="text.primary">{fullName}</Typography>
+        {selectedDir && <Typography color="text.primary">{selectedDir.label}</Typography>}
       </Breadcrumbs>
 
       {/* Page header */}
@@ -220,155 +221,157 @@ export default function CompanyDirectoryPage() {
             variant="body2"
             sx={{ color: 'text.secondary', maxWidth: 520 }}
           >
-            {selectedDir
-              ? `Dokumen ${selectedDir.label.toLowerCase()} untuk ${fullName}.`
-              : `Pilih jenis transaksi untuk melihat dokumen yang sudah dibayar dan diarsipkan untuk ${fullName}.`}
+            {selectedDir ? (
+              selectedDir.key === 'rekap'
+                ? `Laporan rekap otomatis dari Transaksi QLOLA untuk ${fullName}.`
+                : `Dokumen ${selectedDir.label.toLowerCase()} untuk ${fullName}.`
+            ) : (
+              `Pilih jenis transaksi untuk melihat dokumen yang sudah dibayar dan diarsipkan untuk ${fullName}.`
+            )}
           </Typography>
         </Box>
 
-        <Paper
-          elevation={0}
-          sx={{
-            px: 2.2,
-            py: 1.4,
-            borderRadius: 3,
-            border: (t) =>
-              `1px solid ${
-                t.palette.mode === 'dark' ? '#28325b' : '#cbd5ff'
-              }`,
-            background: (t) =>
-              t.palette.mode === 'dark'
-                ? 'radial-gradient(circle at top left, #27326a 0, #060716 60%)'
-                : 'linear-gradient(135deg, #eef3ff 0, #fdf7ff 70%)',
-            minWidth: 220,
-          }}
-        >
-          <Typography
-            variant="caption"
+        {/* Summary + search/sort (only for real document folders) */}
+        {(!selectedDir || selectedDir.key !== 'rekap') && (
+          <Paper
+            elevation={0}
             sx={{
-              textTransform: 'uppercase',
-              letterSpacing: 0.12,
-              color: 'text.secondary',
+              px: 2.2,
+              py: 1.4,
+              borderRadius: 3,
+              border: (t) =>
+                `1px solid ${t.palette.mode === 'dark' ? '#28325b' : '#cbd5ff'}`,
+              minWidth: 260,
             }}
           >
-            {companyCode}
-          </Typography>
-          <Typography variant="subtitle1" sx={{ fontWeight: 700, mb: 0.25 }}>
-            {fullName}
-          </Typography>
-          <Box sx={{ display: 'flex', gap: 1.5, mt: 0.75 }}>
-            <Chip
-              size="small"
-              label={
-                selectedDir
-                  ? `${visibleDocs.length} dokumen`
-                  : `${allDocs.length} dokumen diarsip`
-              }
-              sx={{
-                borderRadius: 999,
-                fontWeight: 600,
-                bgcolor: isDark ? '#151a32' : '#e4efff',
-                color: isDark ? '#c3d4ff' : '#174a9c',
-              }}
-            />
-            {!selectedDir && (
-              <Chip
-                size="small"
-                label={`${directories.length} kategori`}
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+              <Box
                 sx={{
-                  borderRadius: 999,
-                  bgcolor: isDark ? '#151824' : '#f3e9ff',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  mb: 0.5,
                 }}
-              />
-            )}
-          </Box>
-        </Paper>
+              >
+                <Box>
+                  <Typography
+                    variant="caption"
+                    sx={{
+                      textTransform: 'uppercase',
+                      letterSpacing: 0.12,
+                      color: 'text.secondary',
+                    }}
+                  >
+                    {companyCode}
+                  </Typography>
+                  <Typography
+                    variant="subtitle1"
+                    sx={{ fontWeight: 700, mb: 0.25 }}
+                  >
+                    {fullName}
+                  </Typography>
+                </Box>
+                <FolderOpenIcon color="primary" />
+              </Box>
+
+              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mb: 0.5 }}>
+                <Chip
+                  size="small"
+                  label={
+                    selectedDir
+                      ? `${visibleDocs.length} dokumen`
+                      : `${allDocs.length} dokumen diarsip`
+                  }
+                />
+                {!selectedDir && (
+                  <Chip
+                    size="small"
+                    label={`${directories.length} kategori`}
+                  />
+                )}
+              </Box>
+
+              {selectedDir && (
+                <Box
+                  sx={{
+                    display: 'flex',
+                    flexWrap: 'wrap',
+                    gap: 1,
+                    alignItems: 'center',
+                  }}
+                >
+                  <TextField
+                    size="small"
+                    placeholder="Cari kode / judul…"
+                    value={docSearch}
+                    onChange={(e) => setDocSearch(e.target.value)}
+                    InputProps={{
+                      startAdornment: (
+                        <InputAdornment position="start">
+                          <SearchIcon fontSize="small" />
+                        </InputAdornment>
+                      ),
+                    }}
+                    sx={{ flex: 1, minWidth: 140 }}
+                  />
+                  <ToggleButtonGroup
+                    size="small"
+                    exclusive
+                    value={docSort}
+                    onChange={handleSortToggle}
+                    aria-label="Urutkan berdasarkan tanggal"
+                  >
+                    <ToggleButton value="newest" aria-label="Terbaru dulu">
+                      <SortIcon sx={{ fontSize: 16, mr: 0.5 }} />
+                      Terbaru
+                    </ToggleButton>
+                    <ToggleButton value="oldest" aria-label="Terlama dulu">
+                      Terlama
+                    </ToggleButton>
+                  </ToggleButtonGroup>
+                </Box>
+              )}
+            </Box>
+          </Paper>
+        )}
       </Box>
 
       {/* No directory yet: show directory picker */}
       {!selectedDir && (
         <Grid container spacing={3}>
-          {directories.map((dir, index) => {
+          {directories.map((dir) => {
             const count = directoryCounts[dir.key] || 0;
             return (
-              <Grid item xs={12} sm={4} key={dir.key}>
-                <motion.div
-                  initial={{ opacity: 0, y: 14 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.05 * index, duration: 0.25 }}
+              <Grid item xs={12} sm={6} md={4} key={dir.key}>
+                <Paper
+                  onClick={() => handleDirectoryClick(dir)}
+                  role="button"
+                  tabIndex={0}
+                  sx={{
+                    p: 2.4,
+                    borderRadius: 3,
+                    cursor: 'pointer',
+                    border: (t) =>
+                      `1px solid ${
+                        t.palette.mode === 'dark' ? '#2b355c' : '#d5defe'
+                      }`,
+                  }}
                 >
-                  <Paper
-                    onClick={() => handleDirectoryClick(dir)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault();
-                        handleDirectoryClick(dir);
-                      }
-                    }}
-                    role="button"
-                    tabIndex={0}
-                    aria-label={`Buka kategori ${dir.label}`}
-                    sx={{
-                      p: 2.6,
-                      borderRadius: 3,
-                      cursor: 'pointer',
-                      position: 'relative',
-                      overflow: 'hidden',
-                      background: (t) =>
-                        t.palette.mode === 'dark' ? '#171a2f' : '#ffffff',
-                      border: (t) =>
-                        `1px solid ${
-                          t.palette.mode === 'dark' ? '#2a3259' : '#dde4ff'
-                        }`,
-                      boxShadow: (t) =>
-                        t.palette.mode === 'dark'
-                          ? '0 18px 40px rgba(0,0,0,0.8)'
-                          : '0 18px 42px rgba(15,35,95,0.22)',
-                      transition:
-                        'transform 0.18s ease, box-shadow 0.2s ease, border-color 0.18s ease, background 0.18s ease',
-                      '&:before': {
-                        content: '""',
-                        position: 'absolute',
-                        inset: 0,
-                        background: `radial-gradient(circle at top left, ${dir.color}33, transparent 60%)`,
-                        opacity: 0.8,
-                        pointerEvents: 'none',
-                      },
-                      '&:hover': {
-                        transform: 'translateY(-4px)',
-                        boxShadow: (t) =>
-                          t.palette.mode === 'dark'
-                            ? '0 26px 60px rgba(0,0,0,0.95)'
-                            : '0 26px 60px rgba(15,35,95,0.3)',
-                        borderColor: dir.color,
-                      },
-                      '&:focus-visible': {
-                        outline: `3px solid ${dir.color}`,
-                        outlineOffset: 2,
-                      },
-                    }}
-                  >
-                    <Box sx={{ position: 'relative', zIndex: 1 }}>
-                      <Box
-                        sx={{
-                          width: 52,
-                          height: 52,
-                          borderRadius: 2,
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          mb: 1.75,
-                          backgroundColor: dir.color,
-                          boxShadow: '0 10px 24px rgba(15, 23, 42, 0.4)',
-                        }}
-                      >
-                        <FolderOpenIcon
-                          sx={{
-                            fontSize: 30,
-                            color: isDark ? '#0b1025' : '#05264d',
-                          }}
-                        />
-                      </Box>
+                  <Box sx={{ display: 'flex', gap: 2 }}>
+                    <Box
+                      sx={{
+                        width: 52,
+                        height: 52,
+                        borderRadius: 2,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        backgroundColor: dir.color,
+                      }}
+                    >
+                      <FolderOpenIcon sx={{ color: '#0b1025' }} />
+                    </Box>
+                    <Box sx={{ flex: 1 }}>
                       <Typography
                         variant="subtitle1"
                         sx={{ fontWeight: 700, mb: 0.5 }}
@@ -381,162 +384,100 @@ export default function CompanyDirectoryPage() {
                       >
                         {dir.key === 'qlola'
                           ? 'Tagihan pekerjaan yang dibayar lewat QLOLA.'
-                          : dir.key === 'internal'
-                          ? 'Transaksi internal / reimbursement yang sudah dibayar.'
-                          : 'Dokumen lain yang sudah selesai dan diarsip.'}
+                          : 'Laporan rekap otomatis (misalnya BBM) yang bersumber dari transaksi QLOLA.'}
                       </Typography>
                       <Chip
                         size="small"
-                        label={
-                          count
-                            ? `${count} dokumen tersimpan`
-                            : 'Belum ada dokumen'
-                        }
-                        sx={{
-                          borderRadius: 999,
-                          fontWeight: 500,
-                          bgcolor: isDark ? '#101326' : '#f1f5ff',
-                          color: isDark ? '#e5edff' : '#1e293b',
-                        }}
+                        label={`${count} dokumen`}
+                        sx={{ borderRadius: 999 }}
                       />
                     </Box>
-                  </Paper>
-                </motion.div>
+                  </Box>
+                </Paper>
               </Grid>
             );
           })}
         </Grid>
       )}
 
-      {/* Directory selected: show document list */}
+      {/* Directory selected */}
       {selectedDir && (
-        <Box sx={{ mt: 1 }}>
+        <Box sx={{ mt: 2 }}>
           <Box sx={{ mb: 2 }}>
             <Button
               variant="outlined"
               color="primary"
               startIcon={<ArrowBackIcon />}
               onClick={handleBackToDirectories}
-              sx={{
-                borderRadius: 999,
-                fontWeight: 600,
-                mb: 2,
-                background: isDark ? '#171c3a' : '#f7f9ff',
-                '&:hover': {
-                  background: isDark ? '#1b2145' : '#edf2ff',
-                },
-              }}
+              sx={{ borderRadius: 999, fontWeight: 600 }}
             >
               Kembali ke daftar kategori
             </Button>
           </Box>
 
-          <Paper
-            elevation={0}
-            sx={{
-              p: 2,
-              mb: 2.5,
-              borderRadius: 3,
-              border: (t) =>
-                `1px solid ${
-                  t.palette.mode === 'dark' ? '#242b4b' : '#d4ddff'
-                }`,
-              background: (t) =>
-                t.palette.mode === 'dark' ? '#0f1427' : '#ffffff',
-            }}
-          >
-            <Box
-              sx={{
-                display: 'flex',
-                flexWrap: 'wrap',
-                alignItems: 'center',
-                gap: 2,
-                justifyContent: 'space-between',
-              }}
-            >
-              <Box sx={{ flex: 1, minWidth: 260 }}>
-                <Typography
-                  variant="subtitle1"
-                  sx={{ fontWeight: 600, mb: 0.5 }}
-                >
-                  {selectedDir.label}
-                </Typography>
-                <Typography
-                  variant="body2"
-                  sx={{ color: 'text.secondary' }}
-                >
-                  Menampilkan {visibleDocs.length} dari {docsToDisplay.length}{' '}
-                  dokumen yang sudah dibayar.
-                </Typography>
-              </Box>
-
-              <Box
-                sx={{
-                  display: 'flex',
-                  flexWrap: 'wrap',
-                  gap: 1.5,
-                  alignItems: 'center',
-                }}
+          {selectedDir.key === 'rekap' ? (
+            // Rekap folder view
+            <Box sx={{ mt: 1 }}>
+              <Typography
+                variant="subtitle1"
+                sx={{ fontWeight: 600, mb: 1.5 }}
               >
-                <TextField
-                  size="small"
-                  placeholder="Cari kode, judul, atau catatan…"
-                  value={docSearch}
-                  onChange={(e) => setDocSearch(e.target.value)}
-                  sx={{
-                    minWidth: 220,
-                    '& .MuiOutlinedInput-root': {
-                      borderRadius: 999,
-                      background: (t) =>
-                        t.palette.mode === 'dark' ? '#050817' : '#f9fafb',
-                    },
-                  }}
-                  InputProps={{
-                    startAdornment: (
-                      <InputAdornment position="start">
-                        <SearchIcon fontSize="small" />
-                      </InputAdornment>
-                    ),
-                    endAdornment: docSearch ? (
-                      <InputAdornment position="end">
-                        <IconButton
-                          size="small"
-                          onClick={() => setDocSearch('')}
-                          aria-label="Bersihkan pencarian"
+                Pilih jenis rekap:
+              </Typography>
+              <Grid container spacing={3}>
+                {REKAP_FILES.map((rekap) => (
+                  <Grid item xs={12} sm={6} md={4} key={rekap.key}>
+                    <Paper
+                      onClick={() =>
+                        navigate(`/directory/${slug}/rekap/${rekap.key}`)
+                      }
+                      role="button"
+                      tabIndex={0}
+                      sx={{
+                        p: 2.4,
+                        borderRadius: 3,
+                        cursor: 'pointer',
+                        border: (t) =>
+                          `1px solid ${
+                            t.palette.mode === 'dark' ? '#2b355c' : '#d5defe'
+                          }`,
+                      }}
+                    >
+                      <Box sx={{ display: 'flex', gap: 2 }}>
+                        <Box
+                          sx={{
+                            width: 44,
+                            height: 44,
+                            borderRadius: 2,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            backgroundColor: '#e5ecff',
+                          }}
                         >
-                          ×
-                        </IconButton>
-                      </InputAdornment>
-                    ) : null,
-                  }}
-                />
-
-                <ToggleButtonGroup
-                  size="small"
-                  exclusive
-                  value={docSort}
-                  onChange={handleSortToggle}
-                  aria-label="Urutkan berdasarkan tanggal"
-                  sx={{
-                    '& .MuiToggleButton-root': {
-                      px: 1.5,
-                      borderRadius: 999,
-                    },
-                  }}
-                >
-                  <ToggleButton value="newest" aria-label="Terbaru dulu">
-                    <SortIcon sx={{ fontSize: 16, mr: 0.5 }} />
-                    Terbaru
-                  </ToggleButton>
-                  <ToggleButton value="oldest" aria-label="Terlama dulu">
-                    Terlama
-                  </ToggleButton>
-                </ToggleButtonGroup>
-              </Box>
+                          <DescriptionOutlinedIcon />
+                        </Box>
+                        <Box sx={{ flex: 1 }}>
+                          <Typography
+                            variant="subtitle1"
+                            sx={{ fontWeight: 600, mb: 0.25 }}
+                          >
+                            {rekap.label}
+                          </Typography>
+                          <Typography
+                            variant="body2"
+                            sx={{ color: 'text.secondary' }}
+                          >
+                            {rekap.description}
+                          </Typography>
+                        </Box>
+                      </Box>
+                    </Paper>
+                  </Grid>
+                ))}
+              </Grid>
             </Box>
-          </Paper>
-
-          {loading ? (
+          ) : loading ? (
             <Box
               sx={{
                 display: 'flex',
@@ -561,236 +502,75 @@ export default function CompanyDirectoryPage() {
                   `1px dashed ${
                     t.palette.mode === 'dark' ? '#4b567f' : '#c9d4ff'
                   }`,
-                background: (t) =>
-                  t.palette.mode === 'dark' ? '#0b1021' : '#f8f9ff',
               }}
             >
-              <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 0.75 }}>
+              <Typography
+                variant="subtitle1"
+                sx={{ fontWeight: 600, mb: 0.75 }}
+              >
                 Belum ada dokumen di kategori ini
               </Typography>
               <Typography
                 variant="body2"
                 sx={{ color: 'text.secondary', maxWidth: 460, mx: 'auto' }}
               >
-                Dokumen akan muncul di sini setelah statusnya{' '}
-                <Box component="span" sx={{ fontWeight: 600 }}>
-                  sudah dibayar
-                </Box>{' '}
-                dan diarsip untuk {fullName}.
+                Dokumen yang sudah diarsip untuk kategori ini akan muncul di
+                sini.
               </Typography>
             </Paper>
           ) : (
-            <Grid container spacing={2.5}>
-              {visibleDocs.map((doc, index) => (
-                <Grid
-                  item
-                  xs={12}
-                  md={6}
-                  key={doc.id || doc.document_code || index}
-                  sx={{ display: 'flex' }}
-                >
-                  <motion.div
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.04 * index, duration: 0.25 }}
-                    style={{ width: '100%', display: 'flex' }}
+            <Grid container spacing={3}>
+              {visibleDocs.map((doc) => (
+                <Grid item xs={12} md={6} key={doc.id}>
+                  <Paper
+                    sx={{
+                      p: 2.4,
+                      borderRadius: 3,
+                      display: 'flex',
+                      gap: 2,
+                      alignItems: 'flex-start',
+                      cursor: 'pointer',
+                    }}
+                    onClick={() =>
+                      navigate(
+                        `/directory/${slug}/${selectedDir.key}/preview/${doc.document_code}`
+                      )
+                    }
                   >
-                    <Paper
-                      className="doc-card"
+                    <Box
                       sx={{
-                        p: 2.4,
-                        borderRadius: 3,
-                        position: 'relative',
-                        cursor: 'pointer',
-                        border: (t) =>
-                          `1px solid ${
-                            t.palette.mode === 'dark'
-                              ? '#2b355c'
-                              : '#d5defe'
-                          }`,
-                        background: (t) =>
-                          t.palette.mode === 'dark'
-                            ? 'radial-gradient(circle at top left, #27326a 0, #050817 60%)'
-                            : 'linear-gradient(135deg, #f9fafb 0, #eef2ff 80%)',
-                        boxShadow: (t) =>
-                          t.palette.mode === 'dark'
-                            ? '0 20px 46px rgba(0,0,0,0.95)'
-                            : '0 18px 42px rgba(15,35,95,0.25)',
-                        transition:
-                          'transform 0.18s ease, box-shadow 0.2s ease, border-color 0.18s ease',
-                        '&:hover': {
-                          transform: 'translateY(-3px)',
-                          boxShadow: (t) =>
-                            t.palette.mode === 'dark'
-                              ? '0 26px 60px rgba(0,0,0,0.98)'
-                              : '0 24px 60px rgba(15,35,95,0.32)',
-                          borderColor: highlight,
-                        },
-                        '&:focus-visible': {
-                          outline: '3px solid',
-                          outlineColor: highlight,
-                          outlineOffset: 2,
-                        },
-                        // equal height card flex layout
-                        height: '100%',
+                        width: 44,
+                        height: 44,
+                        borderRadius: 2,
                         display: 'flex',
-                        flexDirection: 'column',
-                      }}
-                      role="button"
-                      tabIndex={0}
-                      aria-label={`Buka ${doc.document_code}`}
-                      onClick={() =>
-                        navigate(
-                          `/directory/${slug}/${selectedDir.key}/preview/${doc.document_code}`
-                        )
-                      }
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' || e.key === ' ') {
-                          e.preventDefault();
-                          navigate(
-                            `/directory/${slug}/${selectedDir.key}/preview/${doc.document_code}`
-                          );
-                        }
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        backgroundColor: '#e5ecff',
                       }}
                     >
-                      {/* Delete button (owner only) */}
-                      {hasOwnerRole && (
-                        <IconButton
-                          size="small"
-                          sx={{
-                            position: 'absolute',
-                            top: 8,
-                            right: 8,
-                            color: '#f97373',
-                            backgroundColor: isDark ? '#111322' : '#ffffff',
-                            '&:hover': {
-                              backgroundColor: isDark ? '#191d33' : '#fee2e2',
-                            },
-                          }}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleDelete(doc.id);
-                          }}
-                          aria-label="Hapus dokumen"
-                        >
-                          <DeleteIcon sx={{ fontSize: 18 }} />
-                        </IconButton>
-                      )}
-
-                      <Box
-                        sx={{
-                          display: 'flex',
-                          alignItems: 'flex-start',
-                          gap: 2,
-                        }}
+                      <DescriptionOutlinedIcon />
+                    </Box>
+                    <Box sx={{ flex: 1, minWidth: 0 }}>
+                      <Typography
+                        variant="subtitle2"
+                        sx={{ fontWeight: 700, mb: 0.4 }}
                       >
-                        <Box
-                          sx={{
-                            width: 46,
-                            height: 58,
-                            borderRadius: 1.5,
-                            background: isDark ? '#0b1021' : '#ffffff',
-                            boxShadow: '0 10px 24px rgba(15,23,42,0.35)',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            position: 'relative',
-                            flexShrink: 0,
-                          }}
-                        >
-                          {/* Paper icon with subtle folded corner */}
-                          <DescriptionOutlinedIcon
-                            sx={{
-                              fontSize: 30,
-                              color: isDark ? '#9ca3ff' : '#4b5563',
-                            }}
-                          />
-                          <Box
-                            sx={{
-                              position: 'absolute',
-                              top: 0,
-                              right: 0,
-                              width: 18,
-                              height: 18,
-                              borderTopRightRadius: 6,
-                              borderBottomLeftRadius: 20,
-                              background: highlight,
-                            }}
-                          />
-                        </Box>
-
-                        <Box sx={{ flex: 1, minWidth: 0 }}>
-                          <Typography
-                            variant="subtitle2"
-                            sx={{
-                              fontWeight: 700,
-                              mb: 0.4,
-                              color: isDark ? '#e5edff' : '#111827',
-                            }}
-                            noWrap
-                            title={doc.title || doc.document_code}
-                          >
-                            {doc.title || '(Tanpa judul)'}
-                          </Typography>
-                          <Typography
-                            variant="body2"
-                            sx={{
-                              mb: 0.4,
-                              color: 'text.secondary',
-                              fontFamily: 'monospace',
-                              letterSpacing: 0.3,
-                            }}
-                          >
-                            #{doc.document_code}
-                          </Typography>
-
-                          <Box
-                            sx={{
-                              display: 'flex',
-                              flexWrap: 'wrap',
-                              gap: 1,
-                              alignItems: 'center',
-                              mb: 0.75,
-                            }}
-                          >
-                            <Chip
-                              size="small"
-                              label={formatDocType(doc.doc_type)}
-                              sx={{
-                                borderRadius: 999,
-                                height: 22,
-                                fontSize: 11,
-                                bgcolor: isDark ? '#101326' : '#e5edff',
-                              }}
-                            />
-                            <Typography
-                              variant="caption"
-                              sx={{ color: 'text.secondary' }}
-                            >
-                              {formatDate(doc.created_at)}
-                            </Typography>
-                          </Box>
-
-                          <Box sx={{ mt: 0.75, minHeight: 40 }}>
-                            {doc.description && (
-                              <Typography
-                                variant="body2"
-                                sx={{
-                                  color: isDark ? '#e5e7eb' : '#374151',
-                                  display: '-webkit-box',
-                                  WebkitLineClamp: 2,
-                                  WebkitBoxOrient: 'vertical',
-                                  overflow: 'hidden',
-                                }}
-                              >
-                                {doc.description}
-                              </Typography>
-                            )}
-                          </Box>
-                        </Box>
-                      </Box>
-                    </Paper>
-                  </motion.div>
+                        {doc.document_code}
+                      </Typography>
+                      <Typography
+                        variant="body2"
+                        sx={{ color: 'text.secondary', mb: 0.5 }}
+                      >
+                        {doc.title}
+                      </Typography>
+                      <Typography
+                        variant="body2"
+                        sx={{ color: 'text.secondary', fontSize: 12 }}
+                      >
+                        {formatDocType(doc.doc_type)} · {formatDate(doc.created_at)}
+                      </Typography>
+                    </Box>
+                  </Paper>
                 </Grid>
               ))}
             </Grid>

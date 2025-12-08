@@ -12,6 +12,7 @@ from documents.views import (
     UserSettingsView,
     PaymentProofViewSet,
     sdoc_preview,
+    rekap_view,
 )
 from django.conf import settings
 from django.conf.urls.static import static
@@ -32,6 +33,7 @@ urlpatterns = [
     # The new GPT parse + store route
     path('api/parse-and-store/', parse_and_store_view, name='parse_and_store'),
     path('api/progress/<str:job_id>/', progress_view, name='progress_view'),
+    path('api/rekap/<str:company_code>/<str:rekap_key>/', rekap_view, name='rekap'),
     path('api/login/', login_view, name='login'),  # <-- add this route
     path('api/token/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('api/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),

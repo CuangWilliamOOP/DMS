@@ -11,6 +11,7 @@ import fitz
 from PIL import Image, ImageDraw, ImageFont
 from django.conf import settings
 from PIL import ImageOps
+from datetime import datetime, date
 from django.contrib.auth import authenticate
 from django.core.files import File
 from django.http import JsonResponse
@@ -45,6 +46,20 @@ logger = logging.getLogger(__name__)
 
 PROGRESS_TTL = 60 * 60  # 1h
 OCR_MARKER_BUDGET = int(os.environ.get("OCR_MARKER_BUDGET", "2"))
+
+# --- Rekap configuration ----------------------------------------------------
+REKAP_CONFIG = {
+    "bbm": {
+        "label": "Rekap BBM",
+        # keywords in KETERANGAN / vendor text (lowercased comparisons)
+        "keywords": [
+            "po pembayaran solar",
+            "pembayaran solar",
+            "bbm",
+        ],
+        "doc_types": ["tagihan_pekerjaan"],  # QLOLA transaksi
+    },
+}
 
 def _pkey(job_id: str) -> str:
     return f"progress:{job_id}"
@@ -501,6 +516,123 @@ def _looks_like_continuation(first_parsed, second_parsed) -> bool:
             if any(any(str(c).strip() for c in r) for r in tbl[1:]):
                 return True
     return False
+
+
+def _parse_ymd(s: str | None) -> date | None:
+    """Parse 'YYYY-MM-DD' into a date or return None."""
+    if not s:
+        return None
+    try:
+        return datetime.strptime(s, "%Y-%m-%d").date()
+    except (ValueError, TypeError):
+        return None
+
+
+def _idr_to_int(text) -> int:
+    """'5.200.000' → 5200000. Graceful on empty/None."""
+    if text is None:
+        return 0
+    digits = re.sub(r"[^\d]", "", str(text))
+    return int(digits or "0")
+
+def _format_date_long_id(d) -> str:
+    """Return date as 'DD Month YYYY' (e.g., '13 December 2025'). Accepts date/datetime/ISO/None."""
+    if not d:
+        return ""
+    if isinstance(d, str):
+        # Try common formats
+        for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%d.%m.%Y"):
+            try:
+                d = datetime.strptime(d, fmt).date()
+                break
+            except Exception:
+                continue
+        else:
+            return str(d)
+    if hasattr(d, "date") and not isinstance(d, date):
+        try:
+            d = d.date()
+        except Exception:
+            pass
+    try:
+        return d.strftime("%d %B %Y")
+    except Exception:
+        return str(d)
+
+def _parse_tanggal_masuk_from_keterangan(text: str) -> date | None:
+    """
+    Extract 'MASUK dd/mm/yy' (or dd-mm-yy / dd.mm.yy) from keterangan.
+    Example: '... MASUK 11/10/25 LOKASI ...' → date(2025, 10, 11)
+    """
+    if not text:
+        return None
+    m = re.search(
+        r"masuk\s*(?:tgl\s*)?:?\s*(\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4})",
+        str(text),
+        flags=re.IGNORECASE,
+    )
+    if not m:
+        return None
+    raw = m.group(1).replace(".", "/").replace("-", "/")
+    try:
+        d_s, m_s, y_s = raw.split("/")
+        day = int(d_s)
+        month = int(m_s)
+        year = int(y_s)
+        if year < 100:
+            year = 2000 + year if year < 70 else 1900 + year
+        return date(year, month, day)
+    except Exception:
+        return None
+
+
+def _parse_liter_from_keterangan(text: str) -> int | None:
+    """
+    Extract jumlah liter from patterns like '(10.000 LTR)' / '(10.000 liter)'.
+    Returns integer liters (e.g. 10000) or None.
+    """
+    if not text:
+        return None
+    m = re.search(
+        r"\(([^)]*[\d\.,]+)\s*(?:ltr|liter|lt)\)",
+        str(text),
+        flags=re.IGNORECASE,
+    )
+    if not m:
+        return None
+    digits = re.sub(r"[^\d]", "", m.group(1))
+    if not digits:
+        return None
+    try:
+        return int(digits)
+    except Exception:
+        return None
+
+
+def _shorten_keterangan_bbm(text: str) -> str:
+    """
+    Simplify BBM keterangan.
+    Example:
+      'PEMBAYARAN SOLAR PO - 026 (10.000 LTR) MASUK 11/10/25 LOKASI PT BPSJ'
+      → 'PEMBAYARAN SOLAR PO-026'
+    """
+    if text is None:
+        return ""
+    raw = str(text).strip()
+    if not raw:
+        return ""
+
+    upper = raw.upper()
+    cut_pos = len(raw)
+    for token in [" MASUK", " LOKASI", "("]:
+        idx = upper.find(token)
+        if idx != -1:
+            cut_pos = min(cut_pos, idx)
+
+    raw = raw[:cut_pos].strip()
+    # Normalize 'PO - 026' → 'PO-026'
+    raw = re.sub(r"\bPO\s*-\s*", "PO-", raw, flags=re.IGNORECASE)
+    return raw
 
 
 def _save_single_page_pdf(pdf_doc, page_index: int) -> str:
@@ -1201,3 +1333,158 @@ class PaymentProofViewSet(viewsets.ModelViewSet):
                     doc.parsed_json = pj
                     doc.save(update_fields=["parsed_json"])
         return super().destroy(request, *args, **kwargs)
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def rekap_view(request, company_code: str, rekap_key: str):
+    """
+    Return a recap table (e.g. Rekap BBM) built from archived QLOLA documents
+    for a given company and date range.
+
+    Path params:
+      - company_code: 'ttu', 'asn', 'ols', 'olm'
+      - rekap_key: 'bbm', ...
+
+    Query params:
+      - from: YYYY-MM-DD (inclusive)  → Tanggal Pengajuan (created_at)
+      - to:   YYYY-MM-DD (inclusive)
+    """
+    config = REKAP_CONFIG.get(rekap_key)
+    if not config:
+        return Response(
+            {"detail": f"Unknown rekap type: {rekap_key!r}"},
+            status=drf_status.HTTP_400_BAD_REQUEST,
+        )
+
+    from_str = request.query_params.get("from")
+    to_str = request.query_params.get("to")
+    date_from = _parse_ymd(from_str)
+    date_to = _parse_ymd(to_str)
+
+    if (from_str and not date_from) or (to_str and not date_to):
+        return Response(
+            {"detail": "Parameter tanggal harus format YYYY-MM-DD."},
+            status=drf_status.HTTP_400_BAD_REQUEST,
+        )
+    if date_from and date_to and date_from > date_to:
+        return Response(
+            {"detail": "Parameter 'from' tidak boleh lebih besar dari 'to'."},
+            status=drf_status.HTTP_400_BAD_REQUEST,
+        )
+
+    company_code = (company_code or "").lower().strip()
+
+    # Base queryset: archived, sudah_dibayar, correct company + doc_type
+    qs = (
+        Document.objects.filter(
+            archived=True,
+            status="sudah_dibayar",
+            company=company_code,
+            doc_type__in=config["doc_types"],
+        )
+        .order_by("created_at")
+    )
+
+    rows: list[list] = []
+    meta_rows: list[dict] = []
+    total_amount = 0
+    keywords = [k.lower() for k in config["keywords"]]
+
+    for doc in qs:
+        # Gunakan tanggal pengajuan tagihan = created_at sebagai dasar filter
+        if not doc.created_at:
+            continue
+        tgl_pengajuan = doc.created_at.date()
+        if date_from and tgl_pengajuan < date_from:
+            continue
+        if date_to and tgl_pengajuan > date_to:
+            continue
+
+        sections = doc.parsed_json or []
+        for s_idx, sec in enumerate(sections):
+            if not isinstance(sec, dict):
+                continue
+            tbl = sec.get("table") or []
+            if not tbl or len(tbl) < 2:
+                continue
+
+            header = [str(h or "") for h in tbl[0]]
+            header_lower = [h.strip().lower() for h in header]
+
+            try:
+                k_idx = header_lower.index("keterangan")
+            except ValueError:
+                # Without KETERANGAN we can't classify BBM, skip this section
+                continue
+
+            dby_idx = header_lower.index("dibayar ke") if "dibayar ke" in header_lower else None
+            bank_idx = header_lower.index("bank") if "bank" in header_lower else None
+            ship_idx = header_lower.index("pengiriman") if "pengiriman" in header_lower else None
+
+            for r_idx, row in enumerate(tbl[1:]):
+                # skip rows that are completely empty
+                if not any(str(c or "").strip() for c in row):
+                    continue
+
+                keterangan = str(row[k_idx]) if k_idx < len(row) else ""
+                dibayar_ke = (
+                    str(row[dby_idx]) if dby_idx is not None and dby_idx < len(row) else ""
+                )
+                bank = str(row[bank_idx]) if bank_idx is not None and bank_idx < len(row) else ""
+                pengiriman = (
+                    str(row[ship_idx]) if ship_idx is not None and ship_idx < len(row) else ""
+                )
+
+                haystack = " ".join([keterangan, dibayar_ke, bank]).lower()
+                if not any(kw in haystack for kw in keywords):
+                    continue  # not a BBM row
+
+                nominal = _idr_to_int(pengiriman)
+                total_amount += nominal
+
+                tgl_masuk = _parse_tanggal_masuk_from_keterangan(keterangan)
+                jumlah_liter = _parse_liter_from_keterangan(keterangan)
+                ket_singkat = _shorten_keterangan_bbm(keterangan)
+
+                rows.append(
+                    [
+                        _format_date_long_id(tgl_pengajuan),            # Tanggal Pengajuan
+                        _format_date_long_id(tgl_masuk),                # Tanggal Masuk
+                        doc.document_code,                              # Kode Dokumen
+                        ket_singkat or keterangan,                      # Keterangan singkat
+                        dibayar_ke,                                     # Dibayar ke
+                        jumlah_liter,                                   # Jumlah Liter (int)
+                        nominal,                                        # Nominal (Rp)
+                    ]
+                )
+
+                meta_rows.append(
+                    {
+                        "document_code": doc.document_code,
+                        "section_index": s_idx,
+                        "row_index": r_idx,
+                    }
+                )
+
+    result = {
+        "company_code": company_code,
+        "rekap_key": rekap_key,
+        "rekap_label": config["label"],
+        "from": date_from.isoformat() if date_from else None,
+        "to": date_to.isoformat() if date_to else None,
+        "total_rows": len(rows),
+        "total_amount": total_amount,
+        "columns": [
+            "Tanggal Pengajuan",
+            "Tanggal Masuk",
+            "Kode Dokumen",
+            "Keterangan",
+            "Dibayar ke",
+            "Jumlah Liter",
+            "Nominal",
+        ],
+        "rows": rows,
+        "meta": meta_rows,
+    }
+    return Response(result)

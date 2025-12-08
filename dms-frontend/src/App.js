@@ -17,6 +17,7 @@ import AddDocumentPage from './pages/AddDocumentPage';
 import DirectoryPage from './pages/DirectoryPage';
 import CompanyDirectoryPage from './pages/CompanyDirectoryPage';
 import DocumentPreviewPage from './pages/DocumentPreviewPage';   // FIX: import halaman pratinjau
+import RekapPage from './pages/RekapPage';
 
 function App() {
   const [idleMinutes, setIdleMinutes] = useState(60); // default
@@ -91,6 +92,15 @@ function App() {
             element={
               <MainLayout>
                 <DocumentPreviewPage />
+              </MainLayout>
+            }
+          />
+
+          <Route
+            path="/directory/:companyName/rekap/:rekapKey"
+            element={
+              <MainLayout>
+                <RekapPage />
               </MainLayout>
             }
           />
