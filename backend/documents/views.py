@@ -6,6 +6,8 @@ import hashlib
 import tempfile
 import logging
 import threading
+import json
+from pathlib import Path
 
 import fitz
 from PIL import Image, ImageDraw, ImageFont
@@ -490,6 +492,66 @@ def _ensure_preview_for_supporting_doc(instance: SupportingDocument):
         instance.save(update_fields=['preview_image'])
     except Exception as e:
         logger.warning("preview generation failed for %s: %s", getattr(instance, 'id', '?'), e)
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def kebun_outline_view(request, estate_code: str):
+    """
+    Return GeoJSON outline for a given estate (for now only 'bunut1').
+    """
+    if estate_code != "bunut1":
+        return Response({"detail": "Unknown estate_code"}, status=404)
+
+    geo_path = Path(settings.BASE_DIR) / "maps" / "bunut1_outline.geojson"
+
+    try:
+        with geo_path.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        return Response({"detail": "Outline file not found"}, status=500)
+    except json.JSONDecodeError:
+        return Response({"detail": "Invalid GeoJSON file"}, status=500)
+
+    # Optional: auto-fix swapped lon/lat pairs when clearly wrong
+    def _is_num(x):
+        return isinstance(x, (int, float))
+
+    def _fix_pair(p):
+        if not (isinstance(p, list) and len(p) >= 2 and _is_num(p[0]) and _is_num(p[1])):
+            return p
+        lng, lat = p[0], p[1]
+        # if lat is out of latitude range, but lng looks like latitude, and lat within plausible lon range → swap
+        if abs(lat) > 90 and abs(lng) <= 90 and abs(lat) <= 180:
+            return [lat, lng] + p[2:]
+        return p
+
+    def _walk(node):
+        if isinstance(node, list):
+            if len(node) >= 2 and _is_num(node[0]) and _is_num(node[1]):
+                return _fix_pair(node)
+            return [_walk(x) for x in node]
+        return node
+
+    try:
+        if isinstance(data, dict):
+            t = data.get("type")
+            if t == "FeatureCollection":
+                for ft in data.get("features", []) or []:
+                    geom = ft.get("geometry") or {}
+                    if geom and "coordinates" in geom:
+                        geom["coordinates"] = _walk(geom.get("coordinates"))
+            elif t == "Feature":
+                geom = data.get("geometry") or {}
+                if geom and "coordinates" in geom:
+                    geom["coordinates"] = _walk(geom.get("coordinates"))
+            elif "coordinates" in data:
+                data["coordinates"] = _walk(data.get("coordinates"))
+    except Exception:
+        # Non-fatal: if any error occurs, return original data
+        pass
+
+    return Response(data)
 
 def _is_rekap_header(hdr) -> bool:
     expected = ["no", "keterangan", "dibayar ke", "bank", "pengiriman"]

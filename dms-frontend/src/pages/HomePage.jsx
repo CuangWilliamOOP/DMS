@@ -1,12 +1,15 @@
 // File: src/pages/HomePage.jsx
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, lazy, Suspense } from 'react';
 import { Box, Paper, Divider } from '@mui/material';
 import API from '../services/api';
 import DocumentTable from '../components/DocumentTable';
 import SubHeaderTabs from '../components/SubHeaderTabs';
 import { useTheme } from '@mui/material/styles';
 import { motion } from "framer-motion";
+
+// Lazy-load the map panel so it doesn't bloat the initial bundle.
+const FarmMapPanel = lazy(() => import('../components/FarmMapPanel'));
 
 function HomePage() {
   const [documents, setDocuments] = useState([]);
@@ -33,6 +36,9 @@ function HomePage() {
       );
     } else if (tabValue === 1) {
       return documents.filter((doc) => !doc.archived && doc.status === 'disetujui');
+    } else if (tabValue === 2) {
+      // Map tab
+      return [];
     }
     return [];
   };
@@ -117,7 +123,7 @@ function HomePage() {
           }}
         />
 
-        {/* DocumentTable Card */}
+        {/* Main content card (DocumentTable OR Map) */}
         <motion.div
           initial={{ opacity: 0, y: 30 }}
           animate={{ opacity: 1, y: 0 }}
@@ -140,10 +146,16 @@ function HomePage() {
               margin: "0 auto",
             }}
           >
-            <DocumentTable
-              documents={getFilteredDocuments()}
-              refreshDocuments={fetchAllDocuments}
-            />
+            {tabValue === 2 ? (
+              <Suspense fallback={<Box sx={{ p: 3 }}>Loading map…</Box>}>
+                <FarmMapPanel estateCode="bunut1" />
+              </Suspense>
+            ) : (
+              <DocumentTable
+                documents={getFilteredDocuments()}
+                refreshDocuments={fetchAllDocuments}
+              />
+            )}
           </Paper>
         </motion.div>
       </Box>
@@ -152,3 +164,4 @@ function HomePage() {
 }
 
 export default HomePage;
+

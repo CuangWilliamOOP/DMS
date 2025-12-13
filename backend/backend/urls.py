@@ -13,6 +13,7 @@ from documents.views import (
     PaymentProofViewSet,
     sdoc_preview,
     rekap_view,
+    kebun_outline_view,
 )
 from django.conf import settings
 from django.conf.urls.static import static
@@ -40,6 +41,13 @@ urlpatterns = [
     path('api/me/', user_info),  # <-- add user_info endpoint
     path("api/user-settings/", UserSettingsView.as_view(), name="user_settings"),
     path("api/sdoc/<int:pk>/preview", sdoc_preview, name="sdoc_preview"),
+
+    # NEW: kebun outline (GeoJSON)
+    path(
+        "api/maps/<slug:estate_code>/outline/",
+        kebun_outline_view,
+        name="kebun_outline",
+    ),
 ]
 
 # Serve media in development

@@ -1,4 +1,3 @@
-// File: src/pages/CompanyDirectoryPage.jsx
 
 import React, { useEffect, useMemo, useState } from 'react';
 import {
@@ -67,6 +66,9 @@ const breadcrumbSx = {
   mb: 2.5,
   fontSize: { xs: '0.96rem', sm: '1.05rem', md: '1.15rem' },
   '& a, & .MuiTypography-root': { fontWeight: 600 },
+  '& .MuiBreadcrumbs-ol': {
+    flexWrap: 'nowrap', // keep all crumbs on one line
+  },
 };
 
 const formatDocType = (value) =>
@@ -193,13 +195,21 @@ export default function CompanyDirectoryPage() {
         py: { xs: 3, sm: 4 },
       }}
     >
-      {/* Breadcrumbs */}
+      {/* Breadcrumb */}
       <Breadcrumbs sx={breadcrumbSx} separator=">">
-        <Link component={RouterLink} underline="hover" color="inherit" to="/directory">
+        <Link component={RouterLink} underline="hover" to="/directory">
           Direktori
         </Link>
-        <Typography color="text.primary">{fullName}</Typography>
-        {selectedDir && <Typography color="text.primary">{selectedDir.label}</Typography>}
+        {selectedDir ? (
+          <Link component={RouterLink} underline="hover" to={`/directory/${slug}`}>
+            {fullName}
+          </Link>
+        ) : (
+          <Typography color="text.primary">{fullName}</Typography>
+        )}
+        {selectedDir && (
+          <Typography color="text.primary">{selectedDir.label}</Typography>
+        )}
       </Breadcrumbs>
 
       {/* Page header */}
