@@ -553,6 +553,28 @@ def kebun_outline_view(request, estate_code: str):
 
     return Response(data)
 
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def kebun_blocks_view(request, estate_code: str):
+    """
+    Return GeoJSON block polygons for a given estate (for now only 'bunut1').
+    """
+    if estate_code != "bunut1":
+        return Response({"detail": "Unknown estate_code"}, status=404)
+
+    geo_path = Path(settings.BASE_DIR) / "maps" / "bunut1_blocks.geojson"
+
+    try:
+        with geo_path.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        return Response({"detail": "Blocks file not found"}, status=500)
+    except json.JSONDecodeError:
+        return Response({"detail": "Invalid GeoJSON file"}, status=500)
+
+    return Response(data)
+
 def _is_rekap_header(hdr) -> bool:
     expected = ["no", "keterangan", "dibayar ke", "bank", "pengiriman"]
     norm = [str(x).strip().lower() for x in (hdr or [])]

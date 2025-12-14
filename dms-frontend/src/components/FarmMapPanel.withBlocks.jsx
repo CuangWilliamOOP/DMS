@@ -1,4 +1,5 @@
 // File: src/components/FarmMapPanel.jsx
+// NOTE: This version adds support for estate *block* polygons via GET /api/maps/<estate_code>/blocks/
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Box, Button, CircularProgress, Typography } from '@mui/material';
@@ -7,9 +8,6 @@ import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 
 import API from '../services/api';
-
-// Toggle to reduce cancellations while debugging tile loads.
-const DEBUG_NO_ANIM = false;
 
 // Minimal raster basemap style (OpenStreetMap raster tiles).
 // NOTE: for production/high traffic, consider hosting tiles or using a commercial provider.
@@ -67,10 +65,7 @@ function computeBbox(geojson) {
   let maxLat = -Infinity;
 
   const isValidLngLat = (lng, lat) =>
-    Number.isFinite(lng) &&
-    Number.isFinite(lat) &&
-    Math.abs(lng) <= 180 &&
-    Math.abs(lat) <= 90;
+    Number.isFinite(lng) && Number.isFinite(lat) && Math.abs(lng) <= 180 && Math.abs(lat) <= 90;
 
   for (const [lng0, lat0] of points) {
     if (typeof lng0 !== 'number' || typeof lat0 !== 'number') continue;
@@ -78,6 +73,7 @@ function computeBbox(geojson) {
     let lng = lng0;
     let lat = lat0;
 
+    // Safety: sometimes data arrives swapped.
     if (!isValidLngLat(lng, lat) && isValidLngLat(lat, lng)) {
       [lng, lat] = [lat, lng];
     }
@@ -94,22 +90,132 @@ function computeBbox(geojson) {
   return [minLng, minLat, maxLng, maxLat];
 }
 
+function hslToHex(h, s, l) {
+  // h: 0..360, s/l: 0..100
+  const _h = (((h % 360) + 360) % 360) / 60;
+  const _s = Math.max(0, Math.min(1, s / 100));
+  const _l = Math.max(0, Math.min(1, l / 100));
+
+  const c = (1 - Math.abs(2 * _l - 1)) * _s;
+  const x = c * (1 - Math.abs((_h % 2) - 1));
+  const m = _l - c / 2;
+
+  let r1 = 0;
+  let g1 = 0;
+  let b1 = 0;
+
+  if (_h >= 0 && _h < 1) {
+    r1 = c;
+    g1 = x;
+  } else if (_h >= 1 && _h < 2) {
+    r1 = x;
+    g1 = c;
+  } else if (_h >= 2 && _h < 3) {
+    g1 = c;
+    b1 = x;
+  } else if (_h >= 3 && _h < 4) {
+    g1 = x;
+    b1 = c;
+  } else if (_h >= 4 && _h < 5) {
+    r1 = x;
+    b1 = c;
+  } else {
+    r1 = c;
+    b1 = x;
+  }
+
+  const r = Math.round((r1 + m) * 255);
+  const g = Math.round((g1 + m) * 255);
+  const b = Math.round((b1 + m) * 255);
+
+  const toHex = (v) => Math.max(0, Math.min(255, v)).toString(16).padStart(2, '0');
+  return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+}
+
+function getBlockNameFromFeature(feature) {
+  const props = feature?.properties || {};
+  return String(props.block ?? props.blockName ?? props.name ?? props.id ?? 'Block');
+}
+
+function decorateBlocksWithUniqueColors(geojson) {
+  // Adds/overwrites properties.fillColor + properties.blockName.
+  // Goal: every block gets a unique color (no repeats).
+  if (!geojson || geojson.type !== 'FeatureCollection') return geojson;
+
+  const features = geojson.features || [];
+
+  // Build a stable, deterministic list of unique block names.
+  const names = Array.from(new Set(features.map(getBlockNameFromFeature))).sort((a, b) =>
+    a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' })
+  );
+
+  // Generate distinct colors.
+  // Golden-angle hue spacing tends to look good even when N is not known upfront.
+  const GOLDEN_ANGLE = 137.50776405003785;
+  const used = new Set();
+  const colorByName = new Map();
+
+  const sat = 72;
+  const light = 55;
+
+  for (let i = 0; i < names.length; i += 1) {
+    const name = names[i];
+
+    let hue = (i * GOLDEN_ANGLE) % 360;
+    let color = hslToHex(hue, sat, light);
+
+    // Extremely defensive: if hex collides (rare), shift hue until unique.
+    let tries = 0;
+    while (used.has(color) && tries < 360) {
+      hue = (hue + 1) % 360;
+      color = hslToHex(hue, sat, light);
+      tries += 1;
+    }
+
+    used.add(color);
+    colorByName.set(name, color);
+  }
+
+  return {
+    ...geojson,
+    features: features.map((f) => {
+      const props = f?.properties || {};
+      const blockName = getBlockNameFromFeature(f);
+      const fillColor = colorByName.get(blockName) || '#9e9e9e';
+
+      return {
+        ...f,
+        properties: {
+          ...props,
+          blockName,
+          fillColor,
+        },
+      };
+    }),
+  };
+}
+
 export default function FarmMapPanel({ estateCode = 'bunut1' }) {
   const theme = useTheme();
   const containerRef = useRef(null);
   const mapRef = useRef(null);
+  const popupRef = useRef(null);
 
   const [outline, setOutline] = useState(null);
+  const [blocks, setBlocks] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
   const colors = useMemo(() => {
-    // Slightly different opacity for dark mode so it remains visible.
     const dark = theme.palette.mode === 'dark';
     return {
-      line: dark ? '#ff6b6b' : '#e53935',
-      fill: dark ? 'rgba(255, 107, 107, 0.18)' : 'rgba(229, 57, 53, 0.14)',
-      extrusion: dark ? 'rgba(255, 107, 107, 0.55)' : 'rgba(229, 57, 53, 0.45)',
+      // Outline should be black.
+      line: '#000000',
+
+      // Blocks (fills only; each block gets a unique color via properties.fillColor)
+      blockFallback: dark ? '#6e6e6e' : '#9e9e9e',
+      blockFillOpacity: dark ? 0.52 : 0.42,
+
       overlayBg: dark ? 'rgba(10, 12, 18, 0.65)' : 'rgba(255, 255, 255, 0.72)',
     };
   }, [theme.palette.mode]);
@@ -123,20 +229,92 @@ export default function FarmMapPanel({ estateCode = 'bunut1' }) {
     const [minLng, minLat, maxLng, maxLat] = bbox;
     const bad =
       ![minLng, minLat, maxLng, maxLat].every(Number.isFinite) ||
-      minLng < -180 || maxLng > 180 ||
-      minLat < -90  || maxLat > 90;
+      minLng < -180 ||
+      maxLng > 180 ||
+      minLat < -90 ||
+      maxLat > 90;
 
     if (bad) {
-      console.error("Invalid bbox from outline:", bbox);
-      setError("Koordinat peta tidak valid (lat/long tertukar atau bukan derajat).");
+      console.error('Invalid bbox from outline:', bbox);
+      setError('Koordinat peta tidak valid (pastikan GeoJSON memakai derajat lon/lat).');
       return;
     }
 
     map.fitBounds(
-      [[minLng, minLat], [maxLng, maxLat]],
-      { padding: 60, duration: DEBUG_NO_ANIM ? 0 : 800 }
+      [
+        [minLng, minLat],
+        [maxLng, maxLat],
+      ],
+      { padding: 60, duration: 800 }
     );
   }, [outline]);
+
+  const ensureBlocksLayers = useCallback(
+    (map, geojson) => {
+      if (!map || !geojson) return;
+
+      const decorated = decorateBlocksWithUniqueColors(geojson);
+
+      // Upsert source.
+      const src = map.getSource('estate-blocks');
+      if (src) {
+        try {
+          src.setData(decorated);
+        } catch (e) {
+          console.warn('Failed to update blocks source data:', e);
+        }
+        return;
+      }
+
+      // Add source + layers.
+      map.addSource('estate-blocks', {
+        type: 'geojson',
+        data: decorated,
+      });
+
+      // Blocks (fill only) *below* the estate outer border.
+      map.addLayer(
+        {
+          id: 'blocks-fill',
+          type: 'fill',
+          source: 'estate-blocks',
+          paint: {
+            'fill-color': ['coalesce', ['get', 'fillColor'], colors.blockFallback],
+            'fill-opacity': colors.blockFillOpacity,
+          },
+        },
+        'estate-line'
+      );
+
+      // Interaction: cursor + click popup
+      map.on('mouseenter', 'blocks-fill', () => {
+        map.getCanvas().style.cursor = 'pointer';
+      });
+      map.on('mouseleave', 'blocks-fill', () => {
+        map.getCanvas().style.cursor = '';
+      });
+
+      map.on('click', 'blocks-fill', (e) => {
+        const feature = e?.features?.[0];
+        const block = feature?.properties?.blockName || feature?.properties?.block || feature?.properties?.name || 'Block';
+
+        if (popupRef.current) {
+          try {
+            popupRef.current.remove();
+          } catch (_) {
+            // ignore
+          }
+          popupRef.current = null;
+        }
+
+        popupRef.current = new maplibregl.Popup({ closeButton: true, closeOnClick: true })
+          .setLngLat(e.lngLat)
+          .setHTML(`<div style="font-weight:700">${String(block)}</div>`)
+          .addTo(map);
+      });
+    },
+    [colors.blockFallback, colors.blockFillOpacity]
+  );
 
   // Fetch outline GeoJSON from Django.
   useEffect(() => {
@@ -164,13 +342,39 @@ export default function FarmMapPanel({ estateCode = 'bunut1' }) {
     };
   }, [estateCode]);
 
+  // Fetch block GeoJSON (non-blocking: map can render without it).
+  useEffect(() => {
+    let alive = true;
+
+    (async () => {
+      try {
+        const res = await API.get(`/maps/${estateCode}/blocks/`);
+        if (!alive) return;
+        setBlocks(res.data);
+      } catch (e) {
+        // It's OK if blocks are not ready yet.
+        console.warn('Blocks not available (yet):', e?.response?.status || e);
+        if (!alive) return;
+        setBlocks(null);
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, [estateCode]);
+
   // Create the map once the outline is available (so we can fit bounds immediately).
   useEffect(() => {
     if (!containerRef.current || !outline) return;
 
     // If re-mounting or switching estates, cleanly remove the old map.
     if (mapRef.current) {
-      mapRef.current.remove();
+      try {
+        mapRef.current.remove();
+      } catch (_) {
+        // ignore
+      }
       mapRef.current = null;
     }
 
@@ -189,10 +393,7 @@ export default function FarmMapPanel({ estateCode = 'bunut1' }) {
 
     mapRef.current = map;
 
-    // Quick instrumentation to detect re-inits/cancellations.
-    console.count('[FarmMapPanel] map init');
-    map.on('load', () => console.log('[MapLibre] load'));
-    map.on('idle', () => console.log('[MapLibre] idle (all tiles loaded for current view)'));
+    // Log MapLibre errors to diagnose cancellations/render issues.
     map.on('error', (e) => {
       console.error('[MapLibre error]', e?.error || e);
     });
@@ -207,31 +408,7 @@ export default function FarmMapPanel({ estateCode = 'bunut1' }) {
         data: outline,
       });
 
-      // Fill first.
-      map.addLayer({
-        id: 'estate-fill',
-        type: 'fill',
-        source: 'estate-outline',
-        paint: {
-          'fill-color': colors.fill,
-          'fill-opacity': 1,
-        },
-      });
-
-      // 2.5D / pseudo-3D extrusion (small height, just to give depth when pitched).
-      map.addLayer({
-        id: 'estate-extrusion',
-        type: 'fill-extrusion',
-        source: 'estate-outline',
-        paint: {
-          'fill-extrusion-color': colors.extrusion,
-          'fill-extrusion-height': 60,
-          'fill-extrusion-base': 0,
-          'fill-extrusion-opacity': 0.35,
-        },
-      });
-
-      // Border on top.
+      // Outer border (no fill).
       map.addLayer({
         id: 'estate-line',
         type: 'line',
@@ -242,19 +419,57 @@ export default function FarmMapPanel({ estateCode = 'bunut1' }) {
         },
       });
 
+      // If blocks are already loaded, add them now.
+      if (blocks) {
+        try {
+          ensureBlocksLayers(map, blocks);
+        } catch (e) {
+          console.warn('Failed to add blocks layers:', e);
+        }
+      }
+
       fitToOutline();
-      // Force multiple resizes to avoid layout timing issues.
+      // Force resizes to stabilize canvas after layer additions.
       try { map.resize(); } catch {}
       try { requestAnimationFrame(() => map.resize()); } catch {}
       try { setTimeout(() => map.resize(), 150); } catch {}
     });
 
     return () => {
-      console.count('[FarmMapPanel] map destroy');
-      map.remove();
+      if (popupRef.current) {
+        try {
+          popupRef.current.remove();
+        } catch (_) {
+          // ignore
+        }
+        popupRef.current = null;
+      }
+
+      try {
+        map.remove();
+      } catch (_) {
+        // ignore
+      }
       mapRef.current = null;
     };
-  }, [outline, colors, fitToOutline]);
+  }, [outline, blocks, colors.line, ensureBlocksLayers, fitToOutline]);
+
+  // If blocks load AFTER the map is already created/loaded, add them (or update them) without rebuilding the map.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !blocks) return;
+
+    const apply = () => {
+      try {
+        ensureBlocksLayers(map, blocks);
+      } catch (e) {
+        console.warn('Failed to apply blocks:', e);
+      }
+    };
+
+    if (map.isStyleLoaded()) apply();
+    else map.once('load', apply);
+  }, [blocks, ensureBlocksLayers]);
 
   // Resize map when the container changes size (important when switching tabs / responsive layout).
   useEffect(() => {
@@ -356,12 +571,7 @@ export default function FarmMapPanel({ estateCode = 'bunut1' }) {
 
       {/* Controls */}
       <Box sx={{ position: 'absolute', top: 12, right: 12, display: 'flex', gap: 1, zIndex: 4 }}>
-        <Button
-          size="small"
-          variant="contained"
-          onClick={fitToOutline}
-          disabled={loading || !outline}
-        >
+        <Button size="small" variant="contained" onClick={fitToOutline} disabled={loading || !outline}>
           Reset view
         </Button>
       </Box>
@@ -382,7 +592,7 @@ export default function FarmMapPanel({ estateCode = 'bunut1' }) {
           lineHeight: 1.2,
         }}
       >
-        <div style={{ fontWeight: 700 }}>Bunut 1</div>
+        <div style={{ fontWeight: 700 }}>{estateCode === 'bunut1' ? 'Bunut 1' : estateCode}</div>
         <div style={{ opacity: 0.9 }}>Scroll: zoom • Right-drag: rotate</div>
       </Box>
     </Box>

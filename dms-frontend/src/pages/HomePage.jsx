@@ -9,7 +9,7 @@ import { useTheme } from '@mui/material/styles';
 import { motion } from "framer-motion";
 
 // Lazy-load the map panel so it doesn't bloat the initial bundle.
-const FarmMapPanel = lazy(() => import('../components/FarmMapPanel'));
+const FarmMapPanel = lazy(() => import('../components/FarmMapPanel.withBlocks.jsx'));
 
 function HomePage() {
   const [documents, setDocuments] = useState([]);
@@ -164,4 +164,3 @@ function HomePage() {
 }
 
 export default HomePage;
-
