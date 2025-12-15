@@ -78,27 +78,31 @@ function HomePage() {
         }}
       >
         {/* Tabs */}
-        <Paper
-          elevation={2}
-          sx={{
-            mt: 3,
-            px: { xs: 0, sm: 2 },
-            pt: 1.5,
-            pb: 2,
-            mb: 2,
-            borderRadius: 4,
-            background:
-              theme.palette.mode === "dark"
-                ? "rgba(34, 46, 80, 0.86)"
-                : "rgba(255,255,255,0.89)",
-            boxShadow:
-              theme.palette.mode === "dark"
-                ? "0 1px 10px 0 #24224a2e"
-                : "0 2px 16px 0 #d1e2ff1c",
-            maxWidth: "1200px",
-            margin: "0 auto",
-          }}
-        >
+          <Paper
+            elevation={2}
+            sx={{
+              mt: 3,
+              px: { xs: 0, sm: 2 },
+              pt: 1.5,
+              pb: 2,
+              mb: 2,
+              borderRadius: 4,
+              background:
+                theme.palette.mode === "dark"
+                  ? "rgba(15, 17, 26, 0.92)"
+                  : "rgba(255,255,255,0.89)",
+              boxShadow:
+                theme.palette.mode === "dark"
+                  ? "0 1px 10px 0 #24224a2e"
+                  : "0 2px 16px 0 #d1e2ff1c",
+              border:
+                theme.palette.mode === "dark"
+                  ? "1px solid rgba(255,255,255,0.06)"
+                  : "1px solid rgba(0,0,0,0.06)",
+              maxWidth: "1200px",
+              margin: "0 auto",
+            }}
+          >
           <SubHeaderTabs
             tabValue={tabValue}
             onTabChange={handleTabChange}

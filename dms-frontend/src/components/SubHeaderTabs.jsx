@@ -1,16 +1,35 @@
 // File: src/components/SubHeaderTabs.jsx
 import React from 'react';
 import { Tabs, Tab, Box } from '@mui/material';
+import { useTheme } from '@mui/material/styles';
 
 function SubHeaderTabs({ tabValue, onTabChange, pendingCount, unpaidCount }) {
+  const theme = useTheme();
+  const isDark = theme.palette.mode === 'dark';
   return (
     <Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
       <Tabs
         value={tabValue}
         onChange={onTabChange}
-        variant="fullWidth"             // equal width
-        textColor="primary"
-        indicatorColor="primary"
+        variant="fullWidth"
+        textColor="inherit"
+        TabIndicatorProps={{
+          sx: {
+            height: 3,
+            borderRadius: 999,
+            backgroundColor: isDark ? 'rgba(255,255,255,0.85)' : 'primary.main',
+          },
+        }}
+        sx={{
+          '& .MuiTab-root': {
+            color: isDark ? 'rgba(255,255,255,0.62)' : 'rgba(15,23,42,0.70)',
+            fontWeight: 600,
+          },
+          '& .MuiTab-root.Mui-selected': {
+            color: isDark ? '#fff' : '#0f172a',
+            fontWeight: 800,
+          },
+        }}
       >
         <Tab
           value={0}

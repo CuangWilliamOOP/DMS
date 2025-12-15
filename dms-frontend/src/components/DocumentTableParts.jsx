@@ -10,6 +10,7 @@ import {
   Typography,
   TextField,
   IconButton,
+  TableCell,
 } from '@mui/material';
 import API from '../services/api';
 import DeleteIcon from '@mui/icons-material/Delete';
@@ -222,7 +223,20 @@ export function ItemDocsPreview({
   };
 
   return (
-    <Box sx={{ mt: 1, border: '1px solid #eee', p: 2, borderRadius: 2 }}>
+    <Box
+      sx={(t) => ({
+        mt: 1,
+        p: 2,
+        borderRadius: 2,
+        border: `1px solid ${
+          t.palette.mode === 'dark'
+            ? 'rgba(255,255,255,0.08)'
+            : 'rgba(0,0,0,0.10)'
+        }`,
+        backgroundColor:
+          t.palette.mode === 'dark' ? 'rgba(255,255,255,0.02)' : 'transparent',
+      })}
+    >
       {/* ───── TAB BUTTONS – keep visible in readOnly for viewing ───── */}
       {mainDocStatus === 'disetujui' && (
         <Box
@@ -349,9 +363,21 @@ export function EditableTableCell({ value, canEdit, onChangeValue }) {
     if (tempValue !== value) onChangeValue(tempValue);
   };
   return (
-    <td
-      style={{ whiteSpace: 'normal', wordWrap: 'break-word', cursor: canEdit ? 'pointer' : 'default', borderBottom: '1px solid rgba(224,224,224,1)', padding: 8 }}
+    <TableCell
+      component="td"
       onClick={handleCellClick}
+      sx={{
+        whiteSpace: 'normal',
+        wordBreak: 'break-word',
+        cursor: canEdit ? 'pointer' : 'default',
+        borderBottom: (t) =>
+          `1px solid ${
+            t.palette.mode === 'dark'
+              ? 'rgba(255,255,255,0.08)'
+              : 'rgba(224,224,224,1)'
+          }`,
+        p: 1,
+      }}
     >
       {editing ? (
         <TextField
@@ -367,7 +393,7 @@ export function EditableTableCell({ value, canEdit, onChangeValue }) {
       ) : (
         value && value.trim() !== '' ? value : '-'
       )}
-    </td>
+    </TableCell>
   );
 }
 

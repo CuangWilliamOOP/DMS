@@ -819,10 +819,10 @@ function DocumentTable({ documents, refreshDocuments }) {
           alignItems: 'center',
           justifyContent: 'space-between',
           width: '100%',
-          background: (theme) =>
-            theme.palette.mode === 'dark' ? 'rgba(15,17,26,0.85)' : '#f5f8ff',
-          border: (theme) =>
-            theme.palette.mode === 'dark' ? '1px solid #2d3763' : '1px solid #e6ecfb',
+          background: (t) =>
+            t.palette.mode === 'dark' ? 'rgba(255,255,255,0.04)' : '#f5f8ff',
+          border: (t) =>
+            t.palette.mode === 'dark' ? '1px solid rgba(255,255,255,0.10)' : '1px solid #e6ecfb',
         }}
       >
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
@@ -1020,15 +1020,15 @@ function DocumentTable({ documents, refreshDocuments }) {
                                   borderRadius: 999,
                                   px: 1.4,
                                   lineHeight: 1.1,
-                                  borderColor: (theme) =>
-                                    theme.palette.mode === 'dark' ? '#384170' : '#cfd9ff',
-                                  background: (theme) =>
-                                    theme.palette.mode === 'dark' ? '#232a4b' : '#f7f9ff',
+                                  borderColor: (t) =>
+                                    t.palette.mode === 'dark' ? 'rgba(255,255,255,0.12)' : '#cfd9ff',
+                                  background: (t) =>
+                                    t.palette.mode === 'dark' ? 'rgba(255,255,255,0.04)' : '#f7f9ff',
                                   '&:hover': {
-                                    borderColor: (theme) =>
-                                      theme.palette.mode === 'dark' ? '#40509a' : '#b9c8ff',
-                                    background: (theme) =>
-                                      theme.palette.mode === 'dark' ? '#283157' : '#eef3ff',
+                                    borderColor: (t) =>
+                                      t.palette.mode === 'dark' ? 'rgba(255,255,255,0.18)' : '#b9c8ff',
+                                    background: (t) =>
+                                      t.palette.mode === 'dark' ? 'rgba(255,255,255,0.08)' : '#eef3ff',
                                   },
                                 }}
                               >
@@ -1224,25 +1224,30 @@ function DocumentTable({ documents, refreshDocuments }) {
           mb: 2,
           borderRadius: 4,
           overflowX: 'auto', overflowY: 'hidden',
-          background: (theme) =>
-            theme.palette.mode === 'dark'
-              ? 'linear-gradient(120deg, #0f111a 75%, #1b2240 100%)'
+          background: (t) =>
+            t.palette.mode === 'dark'
+              ? '#0f111a'
               : 'linear-gradient(120deg, #ffffff 78%, #ecf3ff 100%)',
-          boxShadow: (theme) =>
-            theme.palette.mode === 'dark'
-              ? '0 6px 36px 0 #000c'
-              : '0 8px 28px 0 rgba(34,50,84,0.10)',
-          border: (theme) =>
-            theme.palette.mode === 'dark' ? '1px solid #232655' : '1px solid #e7ecfb',
+          boxShadow: (t) =>
+            t.palette.mode === 'dark'
+              ? '0 6px 36px rgba(0,0,0,0.7)'
+              : '0 8px 28px rgba(34,50,84,0.10)',
+          border: (t) =>
+            t.palette.mode === 'dark' ? '1px solid rgba(255,255,255,0.06)' : '1px solid #e7ecfb',
         }}
       >
         <Table
           stickyHeader
           sx={{
+            '& .MuiTableCell-head': {
+              backgroundColor: (t) => (t.palette.mode === 'dark' ? '#0f111a' : '#fff'),
+              borderBottom: (t) =>
+                `1px solid ${t.palette.mode === 'dark' ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)'}`,
+            },
             '& .MuiTableRow-hover:hover': {
-              backgroundColor: (theme) =>
-                theme.palette.mode === 'dark'
-                  ? 'rgba(88,112,180,0.08)'
+              backgroundColor: (t) =>
+                t.palette.mode === 'dark'
+                  ? 'rgba(255,255,255,0.04)'
                   : 'rgba(25,118,210,0.08)',
               transition: 'background-color 0.15s ease',
             },
@@ -1291,13 +1296,13 @@ function DocumentTable({ documents, refreshDocuments }) {
                             toggleRow(doc.id, doc.doc_type);
                           }}
                           sx={{
-                            border: (theme) =>
-                              theme.palette.mode === 'dark' ? '1px solid #2f3866' : '1px solid #e4e9fb',
-                            background: (theme) =>
-                              theme.palette.mode === 'dark' ? '#232a4b' : '#f7f9ff',
+                            border: (t) =>
+                              t.palette.mode === 'dark' ? '1px solid rgba(255,255,255,0.10)' : '1px solid #e4e9fb',
+                            background: (t) =>
+                              t.palette.mode === 'dark' ? 'rgba(255,255,255,0.04)' : '#f7f9ff',
                             '&:hover': {
-                              background: (theme) =>
-                                theme.palette.mode === 'dark' ? '#283157' : '#eef3ff',
+                              background: (t) =>
+                                t.palette.mode === 'dark' ? 'rgba(255,255,255,0.08)' : '#eef3ff',
                             },
                           }}
                         >

@@ -137,51 +137,152 @@ function getBlockNameFromFeature(feature) {
   return String(props.block ?? props.blockName ?? props.name ?? props.id ?? 'Block');
 }
 
-function decorateBlocksWithUniqueColors(geojson) {
-  // Adds/overwrites properties.fillColor + properties.blockName.
-  // Goal: every block gets a unique color (no repeats).
+// --- Helpers to compute adjacency and pick high-contrast colors ---
+function ringsFromGeometry(geom) {
+  if (!geom) return [];
+  if (geom.type === 'Polygon') return geom.coordinates || [];
+  if (geom.type === 'MultiPolygon') {
+    return (geom.coordinates || []).flatMap((poly) => poly || []);
+  }
+  return [];
+}
+
+function vertexKey([lng, lat], precision = 6) {
+  return `${Number(lng).toFixed(precision)},${Number(lat).toFixed(precision)}`;
+}
+
+function vertexSet(feature, precision = 6) {
+  const set = new Set();
+  const rings = ringsFromGeometry(feature?.geometry);
+  for (const ring of rings) {
+    for (const coord of ring || []) {
+      if (Array.isArray(coord) && coord.length >= 2) {
+        set.add(vertexKey(coord, precision));
+      }
+    }
+  }
+  return set;
+}
+
+function setsIntersect(a, b) {
+  const [small, big] = a.size <= b.size ? [a, b] : [b, a];
+  for (const k of small) if (big.has(k)) return true;
+  return false;
+}
+
+function buildAdjacency(features, precision = 6) {
+  const n = features.length;
+  const sets = features.map((f) => vertexSet(f, precision));
+  const neighbors = Array.from({ length: n }, () => new Set());
+
+  for (let i = 0; i < n; i += 1) {
+    for (let j = i + 1; j < n; j += 1) {
+      if (setsIntersect(sets[i], sets[j])) {
+        neighbors[i].add(j);
+        neighbors[j].add(i);
+      }
+    }
+  }
+  return neighbors;
+}
+
+function colorDistanceHsl(a, b) {
+  const dhRaw = Math.abs(a.h - b.h);
+  const dh = Math.min(dhRaw, 360 - dhRaw) / 180; // 0..1
+  const ds = Math.abs(a.s - b.s) / 100;
+  const dl = Math.abs(a.l - b.l) / 100;
+  return dh * 0.78 + dl * 0.20 + ds * 0.02;
+}
+
+function generateCandidates(countHint) {
+  const GOLDEN_ANGLE = 137.50776405003785;
+
+  const hues = [];
+  const baseN = Math.max(24, countHint);
+  for (let i = 0; i < baseN; i += 1) {
+    hues.push((i * GOLDEN_ANGLE) % 360);
+  }
+
+  const sats = [82, 70];
+  const lights = [42, 56, 70];
+
+  const candidates = [];
+  for (const h of hues) {
+    for (const s of sats) {
+      for (const l of lights) {
+        candidates.push({ h, s, l });
+      }
+    }
+  }
+  return candidates;
+}
+
+function decorateBlocksWithContrastingColors(geojson) {
   if (!geojson || geojson.type !== 'FeatureCollection') return geojson;
 
   const features = geojson.features || [];
+  if (!features.length) return geojson;
 
-  // Build a stable, deterministic list of unique block names.
-  const names = Array.from(new Set(features.map(getBlockNameFromFeature))).sort((a, b) =>
-    a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' })
-  );
+  const names = features.map((f, idx) => {
+    const p = f?.properties || {};
+    const blockName = String(
+      p.block ?? p.blockName ?? p.name ?? p.id ?? f.id ?? `Block-${idx + 1}`
+    );
+    return blockName;
+  });
 
-  // Generate distinct colors.
-  // Golden-angle hue spacing tends to look good even when N is not known upfront.
-  const GOLDEN_ANGLE = 137.50776405003785;
-  const used = new Set();
-  const colorByName = new Map();
+  const neighbors = buildAdjacency(features, 6);
 
-  const sat = 72;
-  const light = 55;
+  const order = [...features.keys()].sort((i, j) => {
+    const di = neighbors[i].size;
+    const dj = neighbors[j].size;
+    if (dj !== di) return dj - di;
+    return names[i].localeCompare(names[j], undefined, { numeric: true, sensitivity: 'base' });
+  });
 
-  for (let i = 0; i < names.length; i += 1) {
-    const name = names[i];
+  const candidates = generateCandidates(features.length);
+  const assigned = new Array(features.length).fill(null);
+  const usedHex = new Set();
 
-    let hue = (i * GOLDEN_ANGLE) % 360;
-    let color = hslToHex(hue, sat, light);
+  for (const i of order) {
+    let best = null;
+    let bestScore = -Infinity;
 
-    // Extremely defensive: if hex collides (rare), shift hue until unique.
-    let tries = 0;
-    while (used.has(color) && tries < 360) {
-      hue = (hue + 1) % 360;
-      color = hslToHex(hue, sat, light);
-      tries += 1;
+    for (const cand of candidates) {
+      const hex = hslToHex(cand.h, cand.s, cand.l);
+      if (usedHex.has(hex)) continue;
+
+      let hasNeighborColor = false;
+      let minNeighborDist = Infinity;
+
+      for (const nb of neighbors[i]) {
+        const nbColor = assigned[nb];
+        if (!nbColor) continue;
+        hasNeighborColor = true;
+        const d = colorDistanceHsl(cand, nbColor);
+        if (d < minNeighborDist) minNeighborDist = d;
+      }
+
+      const score = hasNeighborColor ? minNeighborDist : 999;
+      if (score > bestScore) {
+        bestScore = score;
+        best = cand;
+      }
     }
 
-    used.add(color);
-    colorByName.set(name, color);
+    if (!best) best = { h: (i * 47) % 360, s: 78, l: 55 };
+
+    assigned[i] = best;
+    usedHex.add(hslToHex(best.h, best.s, best.l));
   }
 
   return {
     ...geojson,
-    features: features.map((f) => {
+    features: features.map((f, idx) => {
       const props = f?.properties || {};
-      const blockName = getBlockNameFromFeature(f);
-      const fillColor = colorByName.get(blockName) || '#9e9e9e';
+      const blockName = names[idx];
+      const c = assigned[idx];
+      const fillColor = hslToHex(c.h, c.s, c.l);
 
       return {
         ...f,
@@ -253,7 +354,7 @@ export default function FarmMapPanel({ estateCode = 'bunut1' }) {
     (map, geojson) => {
       if (!map || !geojson) return;
 
-      const decorated = decorateBlocksWithUniqueColors(geojson);
+      const decorated = decorateBlocksWithContrastingColors(geojson);
 
       // Upsert source.
       const src = map.getSource('estate-blocks');
