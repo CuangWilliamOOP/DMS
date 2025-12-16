@@ -15,6 +15,7 @@ from documents.views import (
     rekap_view,
     kebun_outline_view,
     kebun_blocks_view,
+    kebun_blocks_meta_view,
 )
 from django.conf import settings
 from django.conf.urls.static import static
@@ -53,6 +54,11 @@ urlpatterns = [
         "api/maps/<slug:estate_code>/blocks/",
         kebun_blocks_view,
         name="kebun_blocks",
+    ),
+    path(
+        "api/maps/<slug:estate_code>/blocks-meta/",
+        kebun_blocks_meta_view,
+        name="kebun_blocks_meta",
     ),
 ]
 

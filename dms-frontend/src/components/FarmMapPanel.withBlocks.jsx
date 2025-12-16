@@ -2,7 +2,23 @@
 // NOTE: This version adds support for estate *block* polygons via GET /api/maps/<estate_code>/blocks/
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Box, Button, CircularProgress, Typography } from '@mui/material';
+import {
+  Box,
+  Button,
+  CircularProgress,
+  Typography,
+  Autocomplete,
+  TextField,
+  Paper,
+  Divider,
+  Chip,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+} from '@mui/material';
 import { useTheme } from '@mui/material/styles';
 import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
@@ -306,6 +322,10 @@ export default function FarmMapPanel({ estateCode = 'bunut1' }) {
   const [blocks, setBlocks] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [blocksMeta, setBlocksMeta] = useState(null); // { AA2: {...}, ... }
+  const [selectedBlockCode, setSelectedBlockCode] = useState(null);
+  const [metaFilter, setMetaFilter] = useState('Semua');
+  
 
   const colors = useMemo(() => {
     const dark = theme.palette.mode === 'dark';
@@ -387,6 +407,19 @@ export default function FarmMapPanel({ estateCode = 'bunut1' }) {
         'estate-line'
       );
 
+      // Selected halo (outline only for selected block)
+      map.addLayer({
+        id: 'blocks-selected-halo',
+        type: 'line',
+        source: 'estate-blocks',
+        filter: ['==', ['get', 'blockName'], ''], // show nothing initially
+        paint: {
+          'line-color': '#d32f2f',
+          'line-width': 4,
+          'line-opacity': 0.9,
+        },
+      });
+
       // Interaction: cursor + click popup
       map.on('mouseenter', 'blocks-fill', () => {
         map.getCanvas().style.cursor = 'pointer';
@@ -412,6 +445,9 @@ export default function FarmMapPanel({ estateCode = 'bunut1' }) {
           .setLngLat(e.lngLat)
           .setHTML(`<div style="font-weight:700">${String(block)}</div>`)
           .addTo(map);
+
+        const code = String(block || '').trim().toUpperCase();
+        setSelectedBlockCode(code);
       });
     },
     [colors.blockFallback, colors.blockFillOpacity]
@@ -464,6 +500,30 @@ export default function FarmMapPanel({ estateCode = 'bunut1' }) {
       alive = false;
     };
   }, [estateCode]);
+
+  // Fetch blocks metadata once per estate
+  useEffect(() => {
+    let cancelled = false;
+    setBlocksMeta(null);
+
+    API.get(`/maps/${estateCode}/blocks-meta/`)
+      .then((res) => {
+        if (!cancelled) setBlocksMeta(res.data || {});
+      })
+      .catch((err) => {
+        console.warn('[FarmMapPanel] blocks-meta fetch failed:', err);
+        if (!cancelled) setBlocksMeta({});
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [estateCode]);
+
+  // Reset meta filter when selected block changes
+  useEffect(() => {
+    setMetaFilter('Semua');
+  }, [selectedBlockCode]);
 
   // Create the map once the outline is available (so we can fit bounds immediately).
   useEffect(() => {
@@ -572,6 +632,180 @@ export default function FarmMapPanel({ estateCode = 'bunut1' }) {
     else map.once('load', apply);
   }, [blocks, ensureBlocksLayers]);
 
+  // Update selected halo filter when selection changes
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    if (!map.getLayer('blocks-selected-halo')) return;
+    const code = (selectedBlockCode || '').trim();
+    map.setFilter('blocks-selected-halo', ['==', ['get', 'blockName'], code]);
+  }, [selectedBlockCode]);
+
+  // Build picker options from blocks
+  const blockOptions = useMemo(() => {
+    const feats = blocks?.features || [];
+    return feats
+      .map((f) => String(f?.properties?.blockName || f?.properties?.block || f?.properties?.name || '').trim())
+      .filter(Boolean)
+      .map((s) => s.toUpperCase())
+      .sort();
+  }, [blocks]);
+
+  // Helpers for metadata rendering below the map
+  const isNilLike = (v) => {
+    if (v === null || v === undefined) return true;
+    if (typeof v === 'string') {
+      const s = v.trim().toLowerCase();
+      return s === '' || s === 'null' || s === '-';
+    }
+    return false;
+  };
+
+  const normalizeKey = (k) => String(k || '').trim();
+
+  const isNoKey = (k) => {
+    const ku = normalizeKey(k).toUpperCase();
+    return ku === 'NO' || ku === 'NO.' || ku === 'NOMOR';
+  };
+
+  const META_FILTER_ORDER = ['Semua', 'Ringkasan', 'Luas', 'Pokok', 'Infrastruktur', 'Lainnya'];
+
+  const metaCategoryForKey = (k) => {
+    const K = normalizeKey(k).toUpperCase();
+
+    if (K.includes('TAHUN')) return 'Ringkasan';
+    if (K.includes('POKOK') || K.includes('SPH')) return 'Pokok';
+    if (K.includes('JALAN') || K.includes('JEMBATAN')) return 'Infrastruktur';
+    if (K.includes('LUAS') || K.includes('HA')) return 'Luas';
+
+    return 'Lainnya';
+  };
+
+  const normalizeYear = (v) => {
+    if (v === null || v === undefined) return '';
+
+    // Case A: numeric 2016 shown as "2.016" due to locale grouping
+    if (typeof v === 'number' && Number.isFinite(v)) {
+      // Case B: Excel sometimes ends up as 2.016 (meaning 2016)
+      if (v > 0 && v < 10) {
+        const candidate = Math.round(v * 1000);
+        if (candidate >= 1900 && candidate <= 2100) return String(candidate);
+      }
+
+      const candidate = Math.round(v);
+      if (candidate >= 1900 && candidate <= 2100) return String(candidate);
+    }
+
+    if (typeof v === 'string') {
+      const s = v.trim();
+
+      // "2.016" (as text) -> "2016"
+      if (/^\d{1,3}(\.\d{3})+$/.test(s)) {
+        const noDots = s.replace(/\./g, '');
+        if (/^\d{4}$/.test(noDots)) return noDots;
+      }
+
+      if (/^\d{4}$/.test(s)) return s;
+      return s;
+    }
+
+    return String(v).trim();
+  };
+
+  const formatValue = (key, v) => {
+    if (v === null || v === undefined) return '';
+
+    const keyU = normalizeKey(key).toUpperCase();
+    const isYearField = keyU.includes('TAHUN');
+
+    if (isYearField) return normalizeYear(v);
+
+    if (typeof v === 'number') {
+      // keep decimals reasonable (area/jalan often has decimals)
+      return v.toLocaleString('id-ID', { maximumFractionDigits: 2 });
+    }
+
+    if (typeof v === 'string') return v.trim();
+
+    if (Array.isArray(v)) return v.filter((x) => !isNilLike(x)).join(', ');
+
+    if (typeof v === 'object') return JSON.stringify(v);
+
+    return String(v);
+  };
+
+  const selectedMeta =
+    blocksMeta && selectedBlockCode ? blocksMeta[String(selectedBlockCode).toUpperCase()] : null;
+
+  const selectedMetaEntries = useMemo(() => {
+    if (!selectedMeta) return [];
+    return Object.entries(selectedMeta).filter(([k, v]) => !isNilLike(v) && !isNoKey(k));
+  }, [selectedMeta]);
+
+  const availableMetaFilters = useMemo(() => {
+    const cats = new Set();
+    for (const [k] of selectedMetaEntries) cats.add(metaCategoryForKey(k));
+    return META_FILTER_ORDER.filter((f) => f === 'Semua' || cats.has(f));
+  }, [selectedMetaEntries]);
+
+  const filteredMetaEntries = useMemo(() => {
+    if (metaFilter === 'Semua') return selectedMetaEntries;
+    return selectedMetaEntries.filter(([k]) => metaCategoryForKey(k) === metaFilter);
+  }, [selectedMetaEntries, metaFilter]);
+
+  const metaRowsForTable = useMemo(() => {
+    // If filtered, just show rows (no category headers)
+    if (metaFilter !== 'Semua') {
+      return filteredMetaEntries.map(([k, v]) => ({ type: 'row', k, v }));
+    }
+
+    // Otherwise group by category with header rows
+    const byCat = new Map();
+    for (const [k, v] of selectedMetaEntries) {
+      const cat = metaCategoryForKey(k);
+      if (!byCat.has(cat)) byCat.set(cat, []);
+      byCat.get(cat).push([k, v]);
+    }
+
+    const rows = [];
+    for (const cat of META_FILTER_ORDER.filter((x) => x !== 'Semua')) {
+      const entries = byCat.get(cat);
+      if (!entries || entries.length === 0) continue;
+
+      entries.sort((a, b) =>
+        String(a[0]).localeCompare(String(b[0]), undefined, { numeric: true, sensitivity: 'base' })
+      );
+
+      rows.push({ type: 'header', label: cat });
+      for (const [k, v] of entries) rows.push({ type: 'row', k, v });
+    }
+
+    return rows;
+  }, [selectedMetaEntries, filteredMetaEntries, metaFilter]);
+
+  const selectBlock = useCallback((code) => {
+    if (!code) return;
+    const normalized = String(code).trim().toUpperCase();
+    setSelectedBlockCode(normalized);
+
+    const map = mapRef.current;
+    if (!map || !blocks?.features) return;
+    const feature = blocks.features.find((f) => {
+      const k = String(f?.properties?.blockName || f?.properties?.block || f?.properties?.name || '').trim().toUpperCase();
+      return k === normalized;
+    });
+    const bbox = feature ? computeBbox(feature) : null;
+    if (bbox) {
+      map.fitBounds(
+        [
+          [bbox[0], bbox[1]],
+          [bbox[2], bbox[3]],
+        ],
+        { padding: 60, duration: 900 }
+      );
+    }
+  }, [blocks]);
+
   // Resize map when the container changes size (important when switching tabs / responsive layout).
   useEffect(() => {
     const el = containerRef.current;
@@ -591,111 +825,238 @@ export default function FarmMapPanel({ estateCode = 'bunut1' }) {
   }, [outline]);
 
   return (
-    <Box
-      sx={{
-        position: 'relative',
-        height: { xs: '60vh', md: '70vh' },
-        borderRadius: 3,
-        overflow: 'hidden',
-        border: theme.palette.mode === 'dark' ? '1px solid rgba(255,255,255,0.08)' : '1px solid rgba(0,0,0,0.06)',
-      }}
-    >
+    <>
       <Box
-        ref={containerRef}
         sx={{
-          position: 'absolute',
-          top: 0,
-          right: 0,
-          bottom: 0,
-          left: 0,
-          width: '100%',
-          height: '100%',
+          position: 'relative',
+          height: { xs: '60vh', md: '70vh' },
+          borderRadius: 3,
+          overflow: 'hidden',
+          border: theme.palette.mode === 'dark' ? '1px solid rgba(255,255,255,0.08)' : '1px solid rgba(0,0,0,0.06)',
         }}
-      />
-
-      {/* Loading / error overlays */}
-      {loading && (
+      >
         <Box
+          ref={containerRef}
           sx={{
             position: 'absolute',
-            inset: 0,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: 1.5,
-            background: colors.overlayBg,
-            zIndex: 3,
+            top: 0,
+            right: 0,
+            bottom: 0,
+            left: 0,
+            width: '100%',
+            height: '100%',
           }}
-        >
-          <CircularProgress size={22} />
-          <Typography variant="body2">Memuat peta…</Typography>
-        </Box>
-      )}
+        />
 
-      {!!error && !loading && (
-        <Box
-          sx={{
-            position: 'absolute',
-            inset: 0,
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: 1,
-            background: colors.overlayBg,
-            zIndex: 3,
-            px: 2,
-            textAlign: 'center',
-          }}
-        >
-          <Typography variant="body2" sx={{ fontWeight: 600 }}>
-            {error}
-          </Typography>
-          <Button
-            size="small"
-            variant="contained"
-            onClick={() => {
-              // brute-force refetch by resetting outline
-              setOutline(null);
-              setLoading(true);
-              setError('');
-              API.get(`/maps/${estateCode}/outline/`)
-                .then((res) => setOutline(res.data))
-                .catch(() => setError('Gagal memuat peta kebun.'))
-                .finally(() => setLoading(false));
+        {/* Loading / error overlays */}
+        {loading && (
+          <Box
+            sx={{
+              position: 'absolute',
+              inset: 0,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 1.5,
+              background: colors.overlayBg,
+              zIndex: 3,
             }}
           >
-            Coba lagi
+            <CircularProgress size={22} />
+            <Typography variant="body2">Memuat peta…</Typography>
+          </Box>
+        )}
+
+        {!!error && !loading && (
+          <Box
+            sx={{
+              position: 'absolute',
+              inset: 0,
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 1,
+              background: colors.overlayBg,
+              zIndex: 3,
+              px: 2,
+              textAlign: 'center',
+            }}
+          >
+            <Typography variant="body2" sx={{ fontWeight: 600 }}>
+              {error}
+            </Typography>
+            <Button
+              size="small"
+              variant="contained"
+              onClick={() => {
+                // brute-force refetch by resetting outline
+                setOutline(null);
+                setLoading(true);
+                setError('');
+                API.get(`/maps/${estateCode}/outline/`)
+                  .then((res) => setOutline(res.data))
+                  .catch(() => setError('Gagal memuat peta kebun.'))
+                  .finally(() => setLoading(false));
+              }}
+            >
+              Coba lagi
+            </Button>
+          </Box>
+        )}
+
+        {/* Controls */}
+        <Box sx={{ position: 'absolute', top: 12, right: 12, display: 'flex', gap: 1, zIndex: 4 }}>
+          <Button size="small" variant="contained" onClick={fitToOutline} disabled={loading || !outline}>
+            Reset view
           </Button>
         </Box>
-      )}
 
-      {/* Controls */}
-      <Box sx={{ position: 'absolute', top: 12, right: 12, display: 'flex', gap: 1, zIndex: 4 }}>
-        <Button size="small" variant="contained" onClick={fitToOutline} disabled={loading || !outline}>
-          Reset view
+        {/* Small label */}
+        <Box
+          sx={{
+            position: 'absolute',
+            bottom: 12,
+            left: 12,
+            zIndex: 4,
+            px: 1.2,
+            py: 0.6,
+            borderRadius: 2,
+            backgroundColor: theme.palette.mode === 'dark' ? 'rgba(0,0,0,0.55)' : 'rgba(0,0,0,0.45)',
+            color: '#fff',
+            fontSize: 12,
+            lineHeight: 1.2,
+          }}
+        >
+          <div style={{ fontWeight: 700 }}>{estateCode === 'bunut1' ? 'Bunut 1' : estateCode}</div>
+          <div style={{ opacity: 0.9 }}>Scroll: zoom • Right-drag: rotate</div>
+        </Box>
+      </Box>
+
+      {/* Controls row below the map */}
+      <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'wrap', mt: 1 }}>
+        <Autocomplete
+          size="small"
+          options={blockOptions}
+          value={selectedBlockCode || null}
+          onChange={(e, value) => {
+            const code = value ? String(value).trim().toUpperCase() : null;
+            setSelectedBlockCode(code);
+          }}
+          sx={{ minWidth: 240, flex: 1, maxWidth: 420 }}
+          renderInput={(params) => <TextField {...params} label="Blok" placeholder="AA2" />}
+        />
+
+        <Button
+          variant="contained"
+          onClick={() => selectBlock(selectedBlockCode)}
+          disabled={!selectedBlockCode}
+        >
+          Cari blok
         </Button>
       </Box>
 
-      {/* Small label */}
-      <Box
-        sx={{
-          position: 'absolute',
-          bottom: 12,
-          left: 12,
-          zIndex: 4,
-          px: 1.2,
-          py: 0.6,
-          borderRadius: 2,
-          backgroundColor: theme.palette.mode === 'dark' ? 'rgba(0,0,0,0.55)' : 'rgba(0,0,0,0.45)',
-          color: '#fff',
-          fontSize: 12,
-          lineHeight: 1.2,
-        }}
+      {/* Block meta info below controls */}
+      <Paper
+        variant="outlined"
+        sx={{ mt: 1, p: 2, borderRadius: 2, maxHeight: 320, overflow: 'auto' }}
       >
-        <div style={{ fontWeight: 700 }}>{estateCode === 'bunut1' ? 'Bunut 1' : estateCode}</div>
-        <div style={{ opacity: 0.9 }}>Scroll: zoom • Right-drag: rotate</div>
-      </Box>
-    </Box>
+        <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
+          {selectedBlockCode ? `Blok ${selectedBlockCode}` : 'Pilih blok'}
+        </Typography>
+
+        <Divider sx={{ my: 1 }} />
+
+        {blocksMeta === null ? (
+          <Typography variant="body2" sx={{ opacity: 0.7 }}>
+            Memuat data blok…
+          </Typography>
+        ) : !selectedBlockCode ? (
+          <Typography variant="body2" sx={{ opacity: 0.7 }}>
+            Klik blok di peta atau gunakan “Cari blok”.
+          </Typography>
+        ) : !selectedMeta ? (
+          <Typography variant="body2" sx={{ opacity: 0.7 }}>
+            Data komposisi untuk blok ini tidak ditemukan.
+          </Typography>
+        ) : selectedMetaEntries.length === 0 ? (
+          <Typography variant="body2" sx={{ opacity: 0.7 }}>
+            Tidak ada data yang bisa ditampilkan.
+          </Typography>
+        ) : (
+          <>
+            {/* Filter chips */}
+            <Box sx={{ display: 'flex', gap: 0.75, flexWrap: 'wrap', mb: 1 }}>
+              {availableMetaFilters.map((f) => (
+                <Chip
+                  key={f}
+                  label={f}
+                  size="small"
+                  clickable
+                  onClick={() => setMetaFilter(f)}
+                  color={metaFilter === f ? 'primary' : 'default'}
+                  variant={metaFilter === f ? 'filled' : 'outlined'}
+                />
+              ))}
+            </Box>
+
+            {/* Organized table */}
+            <TableContainer>
+              <Table size="small" aria-label="blok-meta">
+                <TableHead>
+                  <TableRow>
+                    <TableCell sx={{ fontWeight: 700 }}>Atribut</TableCell>
+                    <TableCell sx={{ fontWeight: 700 }}>Nilai</TableCell>
+                  </TableRow>
+                </TableHead>
+
+                <TableBody>
+                  {metaRowsForTable.map((item, idx) => {
+                    if (item.type === 'header') {
+                      return (
+                        <TableRow key={`h-${item.label}-${idx}`}>
+                          <TableCell
+                            colSpan={2}
+                            sx={{
+                              fontWeight: 800,
+                              opacity: 0.9,
+                              bgcolor:
+                                theme.palette.mode === 'dark'
+                                  ? 'rgba(255,255,255,0.06)'
+                                  : 'rgba(0,0,0,0.04)',
+                            }}
+                          >
+                            {item.label}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    }
+
+                    return (
+                      <TableRow key={`${item.k}-${idx}`} hover>
+                        <TableCell
+                          sx={{
+                            width: '60%',
+                            fontSize: 12,
+                            color: 'text.secondary',
+                            verticalAlign: 'top',
+                            pr: 2,
+                          }}
+                        >
+                          {item.k}
+                        </TableCell>
+                        <TableCell sx={{ width: '40%', fontSize: 13, verticalAlign: 'top' }}>
+                          {formatValue(item.k, item.v)}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          </>
+        )}
+      </Paper>
+    </>
   );
 }

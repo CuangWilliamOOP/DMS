@@ -8,6 +8,8 @@ import logging
 import threading
 import json
 from pathlib import Path
+from functools import lru_cache
+import math
 
 import fitz
 from PIL import Image, ImageDraw, ImageFont
@@ -29,6 +31,8 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.exceptions import PermissionDenied
 
+import pandas as pd
+
 from .gpt_parser import (
     gpt_parse_subsections_from_image,
     gpt_belongs_to_current,
@@ -48,6 +52,215 @@ logger = logging.getLogger(__name__)
 
 PROGRESS_TTL = 60 * 60  # 1h
 OCR_MARKER_BUDGET = int(os.environ.get("OCR_MARKER_BUDGET", "2"))
+
+# --- Map data root (filesystem) --------------------------------------------
+# New location: backend/map/<estate_code>/...
+# Map data root (filesystem)
+# Location: backend/maps/<estate_code>/...
+MAP_DATA_DIR = Path(settings.BASE_DIR) / "maps"
+
+def _safe_estate_dir(estate_code: str) -> Path:
+    """
+    Resolve backend/map/<estate_code> safely (prevents path traversal).
+    """
+    code = (estate_code or "").strip().lower()
+    if not code:
+        raise FileNotFoundError("Missing estate_code")
+
+    base = MAP_DATA_DIR.resolve()
+    estate_dir = (base / code).resolve()
+
+    # Ensure estate_dir is inside MAP_DATA_DIR
+    try:
+        estate_dir.relative_to(base)
+    except ValueError:
+        raise FileNotFoundError("Invalid estate_code")
+
+    if not estate_dir.exists():
+        raise FileNotFoundError(f"Unknown estate: {code}")
+
+    return estate_dir
+
+def _first_existing(*paths: Path) -> Path:
+    for p in paths:
+        if p.exists():
+            return p
+    raise FileNotFoundError("File not found: " + ", ".join(str(p) for p in paths))
+
+# --- Estate composition (blocks meta) ---------------------------------------
+# Map estate_code to relative Excel path under BASE_DIR / "maps"
+# Adjust values to match your actual folder layout.
+ESTATE_KOMPOSISI_FILES = {
+    "bunut1": "bunut/komposisi.xlsx",
+}
+
+def _flatten_col(col_tuple):
+    parts = []
+    for p in (col_tuple if isinstance(col_tuple, tuple) else (col_tuple,)):
+        if p is None:
+            continue
+        s = str(p).strip()
+        if not s or s.startswith("Unnamed:"):
+            continue
+        parts.append(" ".join(s.split()))
+    return " - ".join(parts) if parts else None
+
+def _clean_value(v):
+    if v is None:
+        return None
+    if isinstance(v, float) and math.isnan(v):
+        return None
+    return v
+
+@lru_cache(maxsize=8)
+def _load_komposisi_map(estate_code: str) -> dict:
+    rel = ESTATE_KOMPOSISI_FILES.get(estate_code)
+    if not rel:
+        raise FileNotFoundError(f"unknown estate_code: {estate_code}")
+
+    xlsx_path = Path(settings.BASE_DIR) / "maps" / rel
+    if not xlsx_path.exists():
+        raise FileNotFoundError(str(xlsx_path))
+
+    # Try multi-row headers first (common for this sheet); fall back to single row
+    try:
+        df = pd.read_excel(xlsx_path, sheet_name=0, header=[1, 2, 3])
+    except Exception:
+        df = pd.read_excel(xlsx_path, sheet_name=0, header=0)
+
+    # Identify the BLOCK column
+    block_col = None
+    for c in df.columns:
+        top = c[0] if isinstance(c, tuple) and c else c
+        if str(top).strip().upper() == "BLOCK":
+            block_col = c
+            break
+    if block_col is None:
+        # try relaxed search across flattened names
+        flat_cols_tmp = []
+        for c in df.columns:
+            flat_cols_tmp.append(_flatten_col(c) or str(c))
+        try:
+            block_idx = [s.upper() for s in flat_cols_tmp].index("BLOCK")
+            block_col = df.columns[block_idx]
+        except ValueError:
+            raise ValueError("Could not find BLOCK column in komposisi xlsx")
+
+    # Drop empty BLOCK rows
+    df = df[df[block_col].notna()].copy()
+
+    # Flatten columns to strings
+    flat_cols = []
+    for c in df.columns:
+        if isinstance(c, tuple):
+            flat_cols.append(_flatten_col(c) or str(c))
+        else:
+            flat_cols.append(str(c))
+    df.columns = flat_cols
+
+    # Resolve actual BLOCK column name after flattening
+    block_name_col = None
+    for c in df.columns:
+        if c and c.upper().startswith("BLOCK"):
+            block_name_col = c
+            break
+    if not block_name_col:
+        raise ValueError("BLOCK column not found after flattening")
+
+    # Build mapping keyed by block code
+    result: dict[str, dict] = {}
+    for _, row in df.iterrows():
+        block = str(row.get(block_name_col, "")).strip()
+        if not block or block.lower() == "nan":
+            continue
+        data = {k: _clean_value(row[k]) for k in df.columns if k and k != block_name_col}
+        result[block.upper()] = data
+    return result
+
+def _load_komposisi_map_from_path(xlsx_path: Path) -> dict:
+    # Try multi-row headers first; fall back to single-row
+    try:
+        df = pd.read_excel(xlsx_path, sheet_name=0, header=[1, 2, 3])
+    except Exception:
+        df = pd.read_excel(xlsx_path, sheet_name=0, header=0)
+
+    # Identify the BLOCK column from either tuple or flattened
+    block_col = None
+    for c in df.columns:
+        top = c[0] if isinstance(c, tuple) and c else c
+        if str(top).strip().upper() == "BLOCK":
+            block_col = c
+            break
+    if block_col is None:
+        flat_cols_tmp = []
+        for c in df.columns:
+            flat_cols_tmp.append(_flatten_col(c) or str(c))
+        try:
+            block_idx = [s.upper() for s in flat_cols_tmp].index("BLOCK")
+            block_col = df.columns[block_idx]
+        except ValueError:
+            raise ValueError("Could not find BLOCK column in komposisi xlsx")
+
+    # Drop empty BLOCK rows
+    df = df[df[block_col].notna()].copy()
+
+    # Flatten columns
+    flat_cols = []
+    for c in df.columns:
+        if isinstance(c, tuple):
+            flat_cols.append(_flatten_col(c) or str(c))
+        else:
+            flat_cols.append(str(c))
+    df.columns = flat_cols
+
+    # Resolve actual block name column after flattening
+    block_name_col = None
+    for c in df.columns:
+        if c and c.upper().startswith("BLOCK"):
+            block_name_col = c
+            break
+    if not block_name_col:
+        raise ValueError("BLOCK column not found after flattening")
+
+    # Build mapping keyed by block code
+    result: dict[str, dict] = {}
+    for _, row in df.iterrows():
+        block = str(row.get(block_name_col, "")).strip()
+        if not block or block.lower() == "nan":
+            continue
+        data = {k: _clean_value(row[k]) for k in df.columns if k and k != block_name_col}
+        result[block.upper()] = data
+    return result
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def kebun_blocks_meta_view(request, estate_code):
+    try:
+        estate_dir = _safe_estate_dir(estate_code)
+        # Preferred: pre-generated JSON (fast)
+        candidates = [
+            estate_dir / "blocks_meta.json",
+            estate_dir / f"{estate_code}_blocks_meta.json",
+        ]
+        json_path = next((p for p in candidates if p.exists()), None)
+        if json_path:
+            with json_path.open("r", encoding="utf-8") as f:
+                return Response(json.load(f))
+
+        # Optional fallback: parse XLSX directly if JSON isn't present
+        xlsx_path = estate_dir / "komposisi.xlsx"
+        if xlsx_path.exists():
+            data = _load_komposisi_map_from_path(xlsx_path)
+            return Response(data)
+
+        return Response(
+            {"detail": "blocks_meta.json / <estate>_blocks_meta.json not found (generate it) and komposisi.xlsx not found."},
+            status=404,
+        )
+    except FileNotFoundError as e:
+        return Response({"detail": str(e)}, status=404)
+    except Exception as e:
+        return Response({"detail": f"Failed to load blocks meta: {e}"}, status=500)
 
 # --- Rekap configuration ----------------------------------------------------
 REKAP_CONFIG = {
@@ -498,18 +711,20 @@ def _ensure_preview_for_supporting_doc(instance: SupportingDocument):
 @permission_classes([IsAuthenticated])
 def kebun_outline_view(request, estate_code: str):
     """
-    Return GeoJSON outline for a given estate (for now only 'bunut1').
+    Return GeoJSON outline for a given estate.
     """
-    if estate_code != "bunut1":
-        return Response({"detail": "Unknown estate_code"}, status=404)
-
-    geo_path = Path(settings.BASE_DIR) / "maps" / "bunut1_outline.geojson"
+    try:
+        estate_dir = _safe_estate_dir(estate_code)
+        geo_path = _first_existing(
+            estate_dir / "outline.geojson",
+            estate_dir / f"{estate_code}_outline.geojson",
+        )
+    except FileNotFoundError:
+        return Response({"detail": "Outline file not found"}, status=404)
 
     try:
         with geo_path.open("r", encoding="utf-8") as f:
             data = json.load(f)
-    except FileNotFoundError:
-        return Response({"detail": "Outline file not found"}, status=500)
     except json.JSONDecodeError:
         return Response({"detail": "Invalid GeoJSON file"}, status=500)
 
@@ -558,18 +773,20 @@ def kebun_outline_view(request, estate_code: str):
 @permission_classes([IsAuthenticated])
 def kebun_blocks_view(request, estate_code: str):
     """
-    Return GeoJSON block polygons for a given estate (for now only 'bunut1').
+    Return GeoJSON block polygons for a given estate.
     """
-    if estate_code != "bunut1":
-        return Response({"detail": "Unknown estate_code"}, status=404)
-
-    geo_path = Path(settings.BASE_DIR) / "maps" / "bunut1_blocks.geojson"
+    try:
+        estate_dir = _safe_estate_dir(estate_code)
+        geo_path = _first_existing(
+            estate_dir / "blocks.geojson",
+            estate_dir / f"{estate_code}_blocks.geojson",
+        )
+    except FileNotFoundError:
+        return Response({"detail": "Blocks file not found"}, status=404)
 
     try:
         with geo_path.open("r", encoding="utf-8") as f:
             data = json.load(f)
-    except FileNotFoundError:
-        return Response({"detail": "Blocks file not found"}, status=500)
     except json.JSONDecodeError:
         return Response({"detail": "Invalid GeoJSON file"}, status=500)
 
