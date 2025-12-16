@@ -324,7 +324,7 @@ export default function FarmMapPanel({ estateCode = 'bunut1' }) {
   const [error, setError] = useState('');
   const [blocksMeta, setBlocksMeta] = useState(null); // { AA2: {...}, ... }
   const [selectedBlockCode, setSelectedBlockCode] = useState(null);
-  const [metaFilter, setMetaFilter] = useState('Semua');
+  const [metaFilter, setMetaFilter] = useState('Ringkasan');
   
 
   const colors = useMemo(() => {
@@ -522,7 +522,7 @@ export default function FarmMapPanel({ estateCode = 'bunut1' }) {
 
   // Reset meta filter when selected block changes
   useEffect(() => {
-    setMetaFilter('Semua');
+    setMetaFilter('Ringkasan');
   }, [selectedBlockCode]);
 
   // Create the map once the outline is available (so we can fit bounds immediately).
@@ -743,9 +743,11 @@ export default function FarmMapPanel({ estateCode = 'bunut1' }) {
   }, [selectedMeta]);
 
   const availableMetaFilters = useMemo(() => {
+    // Only show these four chips if present in data
+    const desired = ['Ringkasan', 'Luas', 'Pokok', 'Infrastruktur'];
     const cats = new Set();
     for (const [k] of selectedMetaEntries) cats.add(metaCategoryForKey(k));
-    return META_FILTER_ORDER.filter((f) => f === 'Semua' || cats.has(f));
+    return desired.filter((f) => cats.has(f));
   }, [selectedMetaEntries]);
 
   const filteredMetaEntries = useMemo(() => {
