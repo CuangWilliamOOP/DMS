@@ -18,6 +18,7 @@ import DirectoryPage from './pages/DirectoryPage';
 import CompanyDirectoryPage from './pages/CompanyDirectoryPage';
 import DocumentPreviewPage from './pages/DocumentPreviewPage';   // FIX: import halaman pratinjau
 import RekapPage from './pages/RekapPage';
+import FarmNavigationPage from './pages/FarmNavigationPage';
 
 function App() {
   const [idleMinutes, setIdleMinutes] = useState(60); // default
@@ -39,6 +40,9 @@ function App() {
           {/* Auth */}
           <Route path="/" element={<Navigate to="/login" />} />
           <Route path="/login" element={<LoginPage />} />
+
+          {/* Fullscreen navigation map */}
+          <Route path="/navigate/:estateCode" element={<FarmNavigationPage />} />
 
           {/* Halaman utama */}
           <Route

@@ -20,6 +20,7 @@ import {
   TableRow,
 } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
+import { useNavigate } from 'react-router-dom';
 import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 
@@ -314,6 +315,7 @@ function decorateBlocksWithContrastingColors(geojson) {
 
 export default function FarmMapPanel({ estateCode = 'bunut1' }) {
   const theme = useTheme();
+  const navigate = useNavigate();
   const containerRef = useRef(null);
   const mapRef = useRef(null);
   const popupRef = useRef(null);
@@ -360,6 +362,10 @@ export default function FarmMapPanel({ estateCode = 'bunut1' }) {
       setError('Koordinat peta tidak valid (pastikan GeoJSON memakai derajat lon/lat).');
       return;
     }
+
+    try {
+      map.easeTo({ pitch: 0, bearing: 0, duration: 0 });
+    } catch {}
 
     map.fitBounds(
       [
@@ -547,8 +553,8 @@ export default function FarmMapPanel({ estateCode = 'bunut1' }) {
       style: OSM_RASTER_STYLE,
       center,
       zoom: 13,
-      pitch: 55,
-      bearing: -15,
+      pitch: 0,
+      bearing: 0,
       antialias: true,
     });
 
@@ -798,12 +804,15 @@ export default function FarmMapPanel({ estateCode = 'bunut1' }) {
     });
     const bbox = feature ? computeBbox(feature) : null;
     if (bbox) {
+      try {
+        map.easeTo({ pitch: 0, bearing: 0, duration: 0 });
+      } catch {}
       map.fitBounds(
         [
           [bbox[0], bbox[1]],
           [bbox[2], bbox[3]],
         ],
-        { padding: 60, duration: 900 }
+        { padding: 110, duration: 900 }
       );
     }
   }, [blocks]);
@@ -945,7 +954,7 @@ export default function FarmMapPanel({ estateCode = 'bunut1' }) {
             const code = value ? String(value).trim().toUpperCase() : null;
             setSelectedBlockCode(code);
           }}
-          sx={{ minWidth: 240, flex: 1, maxWidth: 420 }}
+          sx={{ width: 140 }}
           renderInput={(params) => <TextField {...params} label="Blok" placeholder="AA2" />}
         />
 
@@ -955,6 +964,17 @@ export default function FarmMapPanel({ estateCode = 'bunut1' }) {
           disabled={!selectedBlockCode}
         >
           Cari blok
+        </Button>
+
+        <Button
+          variant="outlined"
+          onClick={() => {
+            const q = selectedBlockCode ? `?block=${encodeURIComponent(selectedBlockCode)}` : '';
+            navigate(`/navigate/${estateCode}${q}`);
+          }}
+          disabled={typeof navigator === 'undefined' || !('geolocation' in navigator)}
+        >
+          Mulai Navigasi
         </Button>
       </Box>
 
