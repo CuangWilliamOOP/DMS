@@ -112,7 +112,9 @@ export default function TopBar() {
           boxShadow: '0 4px 18px rgba(15,23,42,0.22)',
         }}
       >
-        <Toolbar sx={{ minHeight: 64, px: { xs: 2, sm: 3 }, gap: 2 }}>
+        <Toolbar
+          sx={{ minHeight: 64, px: { xs: 2, sm: 3 }, gap: { xs: 2, md: 1 } }}
+        >
           {/* Brand / app identity */}
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
             <ShieldIcon sx={{ fontSize: 32, color: '#e0f2fe' }} />
@@ -130,7 +132,12 @@ export default function TopBar() {
               </Typography>
               <Typography
                 variant="caption"
-                sx={{ color: 'rgba(226,232,240,0.9)', fontSize: 11 }}
+                noWrap
+                sx={{
+                  display: { xs: 'none', sm: 'block' },
+                  color: 'rgba(226,232,240,0.9)',
+                  fontSize: 11,
+                }}
               >
                 Document Management System
               </Typography>
@@ -143,7 +150,7 @@ export default function TopBar() {
               sx={{
                 flexGrow: 1,
                 display: 'flex',
-                justifyContent: 'center',
+                justifyContent: 'flex-start',
                 gap: 1,
               }}
             >

@@ -7,7 +7,7 @@ import {
   Button,
   CircularProgress,
   Typography,
-  Autocomplete,
+  MenuItem,
   TextField,
   Paper,
   Divider,
@@ -372,7 +372,7 @@ export default function FarmMapPanel({ estateCode = 'bunut1' }) {
         [minLng, minLat],
         [maxLng, maxLat],
       ],
-      { padding: 60, duration: 800 }
+      { padding: 60, duration: 900 }
     );
   }, [outline]);
 
@@ -798,6 +798,20 @@ export default function FarmMapPanel({ estateCode = 'bunut1' }) {
 
     const map = mapRef.current;
     if (!map || !blocks?.features) return;
+
+    const getAdaptivePadding = () => {
+      try {
+        const el = map.getContainer?.();
+        const w = el?.clientWidth || 0;
+        const h = el?.clientHeight || 0;
+        const minDim = Math.min(w, h);
+        if (!minDim || !Number.isFinite(minDim)) return 80;
+        return Math.round(Math.min(110, Math.max(50, minDim * 0.2)));
+      } catch {
+        return 80;
+      }
+    };
+
     const feature = blocks.features.find((f) => {
       const k = String(f?.properties?.blockName || f?.properties?.block || f?.properties?.name || '').trim().toUpperCase();
       return k === normalized;
@@ -805,14 +819,18 @@ export default function FarmMapPanel({ estateCode = 'bunut1' }) {
     const bbox = feature ? computeBbox(feature) : null;
     if (bbox) {
       try {
+        map.resize();
+      } catch {}
+      try {
         map.easeTo({ pitch: 0, bearing: 0, duration: 0 });
       } catch {}
+      const padding = getAdaptivePadding();
       map.fitBounds(
         [
           [bbox[0], bbox[1]],
           [bbox[2], bbox[3]],
         ],
-        { padding: 110, duration: 900 }
+        { padding, duration: 900 }
       );
     }
   }, [blocks]);
@@ -946,17 +964,32 @@ export default function FarmMapPanel({ estateCode = 'bunut1' }) {
 
       {/* Controls row below the map */}
       <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'wrap', mt: 1 }}>
-        <Autocomplete
+        <TextField
+          select
           size="small"
-          options={blockOptions}
-          value={selectedBlockCode || null}
-          onChange={(e, value) => {
-            const code = value ? String(value).trim().toUpperCase() : null;
+          label="Blok"
+          value={selectedBlockCode || ''}
+          onChange={(e) => {
+            const v = e.target.value;
+            const code = v ? String(v).trim().toUpperCase() : null;
             setSelectedBlockCode(code);
           }}
           sx={{ width: 140 }}
-          renderInput={(params) => <TextField {...params} label="Blok" placeholder="AA2" />}
-        />
+          SelectProps={{
+            displayEmpty: true,
+            renderValue: (selected) => {
+              const s = String(selected || '').trim();
+              return s ? s : 'Pilih blok';
+            },
+          }}
+        >
+          <MenuItem value="">Pilih blok</MenuItem>
+          {blockOptions.map((opt) => (
+            <MenuItem key={opt} value={opt}>
+              {opt}
+            </MenuItem>
+          ))}
+        </TextField>
 
         <Button
           variant="contained"

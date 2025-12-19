@@ -1,6 +1,6 @@
 // File: src/pages/HomePage.jsx
 
-import React, { useEffect, useState, lazy, Suspense } from 'react';
+import React, { useEffect, useLayoutEffect, useState, lazy, Suspense } from 'react';
 import { Box, Paper, Divider } from '@mui/material';
 import API from '../services/api';
 import DocumentTable from '../components/DocumentTable';
@@ -15,6 +15,12 @@ function HomePage() {
   const [documents, setDocuments] = useState([]);
   const [tabValue, setTabValue] = useState(0);
   const theme = useTheme();
+
+  useLayoutEffect(() => {
+    try {
+      window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+    } catch {}
+  }, []);
 
   useEffect(() => {
     fetchAllDocuments();
@@ -71,7 +77,7 @@ function HomePage() {
           minHeight: "100vh",
           width: "100%",
           px: { xs: 0, sm: 2, md: 4 },
-          py: 5,
+          py: { xs: 2, sm: 3, md: 4 },
           mt: 0,
           pt: 1,
           position: 'relative',
@@ -81,7 +87,10 @@ function HomePage() {
           <Paper
             elevation={2}
             sx={{
-              mt: 3,
+              position: tabValue === 2 ? 'relative' : 'sticky',
+              top: tabValue === 2 ? 'auto' : 64,
+              zIndex: tabValue === 2 ? 0 : (t) => t.zIndex.appBar,
+              mt: 0,
               px: { xs: 0, sm: 2 },
               pt: 1.5,
               pb: 2,

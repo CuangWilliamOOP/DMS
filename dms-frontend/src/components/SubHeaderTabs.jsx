@@ -1,17 +1,23 @@
 // File: src/components/SubHeaderTabs.jsx
 import React from 'react';
-import { Tabs, Tab, Box } from '@mui/material';
+import { Tabs, Tab, Box, useMediaQuery } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
 
 function SubHeaderTabs({ tabValue, onTabChange, pendingCount, unpaidCount }) {
   const theme = useTheme();
   const isDark = theme.palette.mode === 'dark';
+  const isSmDown = useMediaQuery(theme.breakpoints.down('sm'));
+
+  const pendingLabel = isSmDown ? 'Belum Disetujui' : 'DOKUMEN BELUM DISETUJUI';
+  const unpaidLabel = isSmDown ? 'Belum Dibayar' : 'DOKUMEN BELUM DIBAYAR';
   return (
     <Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
       <Tabs
         value={tabValue}
         onChange={onTabChange}
-        variant="fullWidth"
+        variant={isSmDown ? 'scrollable' : 'fullWidth'}
+        scrollButtons={isSmDown ? 'auto' : false}
+        allowScrollButtonsMobile
         textColor="inherit"
         TabIndicatorProps={{
           sx: {
@@ -22,6 +28,10 @@ function SubHeaderTabs({ tabValue, onTabChange, pendingCount, unpaidCount }) {
         }}
         sx={{
           '& .MuiTab-root': {
+            fontSize: isSmDown ? 12 : 13,
+            px: isSmDown ? 1.25 : 2,
+            minWidth: isSmDown ? 'auto' : 0,
+            whiteSpace: 'nowrap',
             color: isDark ? 'rgba(255,255,255,0.62)' : 'rgba(15,23,42,0.70)',
             fontWeight: 600,
           },
@@ -35,7 +45,7 @@ function SubHeaderTabs({ tabValue, onTabChange, pendingCount, unpaidCount }) {
           value={0}
           label={
             <Box sx={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
-              <span>DOKUMEN BELUM DISETUJUI</span>
+              <span>{pendingLabel}</span>
               {pendingCount > 0 && (
                 <Box
                   sx={{
@@ -63,7 +73,7 @@ function SubHeaderTabs({ tabValue, onTabChange, pendingCount, unpaidCount }) {
           value={1}
           label={
             <Box sx={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
-              <span>DOKUMEN BELUM DIBAYAR</span>
+              <span>{unpaidLabel}</span>
               {unpaidCount > 0 && (
                 <Box
                   sx={{

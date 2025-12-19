@@ -53,6 +53,182 @@ We moved parsing off the web tier and added a determinate progress UI.
 
 * Add Celery async pipeline and Redis progress store.
 
+## Changelog snippet (Dec 2025) — Peta Kebun & Navigasi
+
+### TTU DMS – Peta Kebun & Navigasi
+
+This repository contains the **TTU Document Management System (DMS)** with an integrated **Peta Kebun (Farm Map)** module for visualizing estates, blocks, and block‑level metadata, plus a **navigation mode** that can locate users in the field.
+
+---
+
+### 1. Peta Kebun (Farm Map)
+
+The Peta Kebun module provides an interactive 2.5D map (MapLibre) embedded in **Beranda** under the **PETA KEBUN** tab.
+
+#### Features
+
+* **Estate outline** rendered as a black boundary (no fill).
+* **Internal blocks** rendered as filled polygons with distinct, contrasting colors.
+* **Click block on map**:
+
+  * Shows a small popup with block code.
+  * Highlights the selected block with a red outline.
+  * Updates block metadata shown **below the map**.
+* **Block search (Cari Blok)**:
+
+  * Dropdown select to choose a block (options only; no mobile keyboard).
+  * Clicking **Cari Blok** zooms the map to that block and highlights it.
+
+---
+
+### 2. Block Metadata (Komposisi)
+
+Block metadata comes from an Excel source (Komposisi) and is converted to JSON for fast access.
+
+#### Data Flow
+
+1. **Source**: `komposisi.xlsx` (per‑estate).
+2. **Conversion**: Python script converts XLSX → `blocks_meta.json`.
+3. **Backend API** serves the JSON.
+4. **Frontend** displays the data in a structured table.
+
+#### Display Rules
+
+* Metadata is shown **below the map**, not in a side panel.
+* Displayed in a **2‑column table** (Atribut | Nilai).
+* **Null / empty values are hidden**.
+* Column **"NO" is not displayed**.
+* **Tahun Tanam normalization**:
+
+  * Values like `2.016` are rendered as `2016`.
+* **Filter chips** allow users to focus on specific aspects:
+
+  * Ringkasan
+  * Luas
+  * Pokok
+  * Infrastruktur
+
+---
+
+### 3. Map Data Structure (Backend)
+
+All map‑related assets are stored per estate under `backend/maps/`:
+
+```
+backend/
+  maps/
+    bunut1/
+      bunut1_outline.geojson   # Estate boundary
+      bunut1_blocks.geojson    # Block polygons
+      bunut1_blocks_meta.json  # Block metadata (from komposisi.xlsx)
+```
+
+#### API Endpoints
+
+(All endpoints require authentication.)
+
+* `GET /api/maps/<estate>/outline/`
+* `GET /api/maps/<estate>/blocks/`
+* `GET /api/maps/<estate>/blocks-meta/`
+
+Example:
+
+```
+GET /api/maps/bunut1/outline/
+GET /api/maps/bunut1/blocks/
+GET /api/maps/bunut1/blocks-meta/
+```
+
+---
+
+### 4. Navigation Mode (Mulai Navigasi)
+
+A dedicated **fullscreen navigation page** is available for field use.
+
+#### How It Works
+
+* From Peta Kebun, click **Mulai Navigasi**.
+* Opens a fullscreen route:
+
+```
+/navigate/:estateCode
+```
+
+Example:
+
+```
+/navigate/bunut1?block=AA2
+```
+
+#### Features
+
+* Uses browser **Geolocation API** (HTTPS required).
+* Shows user position as a blue marker with accuracy circle.
+* Automatically checks distance to estate:
+
+  * If **> 5 km**, shows warning and disables auto‑centering.
+* Buttons:
+
+  * **Kembali** – exit navigation
+  * **Ke kebun** – fit map to estate
+  * **Ke saya** – center map on user position
+
+> Note: This is **position awareness**, not turn‑by‑turn routing.
+
+---
+
+### 5. Frontend Components (Key Files)
+
+* `FarmMapPanel.withBlocks.jsx`
+
+  * Main Peta Kebun component
+  * Handles outline, blocks, selection, block metadata table
+
+* `FarmNavigationPage.jsx`
+
+  * Fullscreen navigation mode
+  * Handles geolocation, distance checks, and user marker
+
+* `HomePage.jsx`
+
+  * Hosts the **PETA KEBUN** tab
+
+---
+
+### 6. Python Utilities
+
+#### XLSX → JSON (Block Metadata)
+
+Used to convert Komposisi Excel files into JSON consumed by the backend.
+
+Example usage:
+
+```bash
+python xlsx_to_blocks_meta_json.py \
+  --input komposisi.xlsx \
+  --output bunut1_blocks_meta.json
+```
+
+---
+
+### 7. Notes & Constraints
+
+* Geolocation only works on **HTTPS** or `localhost`.
+* Desktop browsers may return less accurate positions than mobile GPS.
+* Block colors are algorithmically generated to maximize contrast with neighbors.
+
+---
+
+### 8. Future Extensions
+
+* Color blocks by attribute (Tahun Tanam, TM class, status).
+* Link blocks to operational documents.
+* Add routing / directions (OSRM / Valhalla) if required.
+
+---
+
+Maintained as part of the **TTU DMS** project.
+
 0) Quick checklist for a fresh VPS
 Point DNS staging.caw-dms.com → VPS IP.
 Install: git python3-venv python3-pip nginx nodejs npm certbot python3-certbot-nginx apache2-utils build-essential.
