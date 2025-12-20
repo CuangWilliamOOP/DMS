@@ -16,11 +16,21 @@ import {
   TableRow,
   TableCell,
   Stack,
+  Chip,
+  Divider,
+  TableContainer,
+  TablePagination,
+  InputAdornment,
+  IconButton,
+  Tooltip,
 } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
 import { useParams, useNavigate, Link as RouterLink } from 'react-router-dom';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import DownloadIcon from '@mui/icons-material/Download';
+import SearchIcon from '@mui/icons-material/Search';
+import ClearIcon from '@mui/icons-material/Clear';
+import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
 import API from '../services/api';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -42,6 +52,24 @@ const REKAP_LABELS = {
 const formatIDR = (value) =>
   new Intl.NumberFormat('id-ID', { maximumFractionDigits: 0 }).format(value || 0);
 
+const toISODateLocal = (d) => {
+  const tz = d.getTimezoneOffset() * 60000;
+  return new Date(d.getTime() - tz).toISOString().slice(0, 10);
+};
+
+const rangeLastDays = (days) => {
+  const end = new Date();
+  const start = new Date();
+  start.setDate(end.getDate() - (days - 1));
+  return { from: toISODateLocal(start), to: toISODateLocal(end) };
+};
+
+const rangeThisMonth = () => {
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth(), 1);
+  return { from: toISODateLocal(start), to: toISODateLocal(now) };
+};
+
 function RekapPage() {
   const { companyName, rekapKey } = useParams();
   const navigate = useNavigate();
@@ -52,11 +80,16 @@ function RekapPage() {
   const fullName = companyFullNames[slug] || (companyName || '').toUpperCase();
   const companyCode = slug.replace(/^pt-/, '').replace(/^cv-/, '');
 
-  const [fromDate, setFromDate] = useState('');
-  const [toDate, setToDate] = useState('');
+  const [fromDraft, setFromDraft] = useState('');
+  const [toDraft, setToDraft] = useState('');
+  const [query, setQuery] = useState({ from: '', to: '' });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [rekap, setRekap] = useState(null);
+
+  const [tableSearch, setTableSearch] = useState('');
+  const [page, setPage] = useState(0);
+  const [rowsPerPage, setRowsPerPage] = useState(25);
 
   const rekapLabel = rekap?.rekap_label || REKAP_LABELS[rekapKey] || 'Rekap';
 
@@ -76,30 +109,92 @@ function RekapPage() {
     );
   };
 
-  const fetchRekap = useCallback(async () => {
-    setLoading(true);
-    setError('');
-    try {
-      const params = {};
-      if (fromDate) params.from = fromDate;
-      if (toDate) params.to = toDate;
+  const fetchRekap = useCallback(
+    async (q) => {
+      setLoading(true);
+      setError('');
+      try {
+        const params = {};
+        if (q?.from) params.from = q.from;
+        if (q?.to) params.to = q.to;
 
-      const res = await API.get(`/rekap/${companyCode}/${rekapKey}/`, { params });
-      setRekap(res.data);
-    } catch (err) {
-      console.error(err);
-      const detail =
-        err?.response?.data?.detail || 'Gagal memuat data rekap. Silakan coba lagi.';
-      setError(detail);
-      setRekap(null);
-    } finally {
-      setLoading(false);
-    }
-  }, [companyCode, rekapKey, fromDate, toDate]);
+        const res = await API.get(`/rekap/${companyCode}/${rekapKey}/`, { params });
+        setRekap(res.data);
+      } catch (err) {
+        console.error(err);
+        const detail =
+          err?.response?.data?.detail || 'Gagal memuat data rekap. Silakan coba lagi.';
+        setError(detail);
+        setRekap(null);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [companyCode, rekapKey]
+  );
 
   useEffect(() => {
-    fetchRekap();
-  }, [fetchRekap]);
+    fetchRekap(query);
+  }, [fetchRekap, query.from, query.to]);
+
+  const handleApply = () => {
+    if (fromDraft && toDraft && fromDraft > toDraft) {
+      setError("Tanggal 'Dari' tidak boleh setelah 'Sampai'.");
+      return;
+    }
+    setQuery({ from: fromDraft, to: toDraft });
+  };
+
+  const handleResetFilters = () => {
+    setFromDraft('');
+    setToDraft('');
+    setQuery({ from: '', to: '' });
+    setError('');
+    setTableSearch('');
+  };
+
+  const idxNominal = (rekap?.columns || []).findIndex(
+    (c) => String(c).toLowerCase() === 'nominal'
+  );
+  const idxLiter = (rekap?.columns || []).findIndex(
+    (c) => String(c).toLowerCase().includes('liter')
+  );
+
+  const rowItems = React.useMemo(() => {
+    const rows = rekap?.rows || [];
+    const term = tableSearch.trim().toLowerCase();
+
+    const items = rows.map((row, idx) => ({ row, idx }));
+    if (!term) return items;
+
+    return items.filter(({ row }) =>
+      (row || []).some((cell) => String(cell ?? '').toLowerCase().includes(term))
+    );
+  }, [rekap, tableSearch]);
+
+  React.useEffect(() => {
+    setPage(0);
+  }, [tableSearch, rekap]);
+
+  const paged = React.useMemo(() => {
+    const start = page * rowsPerPage;
+    return rowItems.slice(start, start + rowsPerPage);
+  }, [rowItems, page, rowsPerPage]);
+
+  const visibleAmount = React.useMemo(() => {
+    if (!rowItems.length || idxNominal === -1) return 0;
+    return rowItems.reduce((sum, { row }) => {
+      const v = row?.[idxNominal];
+      return sum + (typeof v === 'number' ? v : 0);
+    }, 0);
+  }, [rowItems, idxNominal]);
+
+  const formatCell = (cell, cIdx) => {
+    if (cell === null || cell === undefined || cell === '') return '—';
+    if (cIdx === idxNominal && typeof cell === 'number') return `Rp ${formatIDR(cell)}`;
+    if (cIdx === idxLiter && typeof cell === 'number') return `${cell.toLocaleString('id-ID')} L`;
+    return String(cell);
+  };
 
   const handleBack = () => {
     navigate(`/directory/${slug}/rekap`);
@@ -271,53 +366,104 @@ function RekapPage() {
             `1px solid ${t.palette.mode === 'dark' ? '#242b4b' : '#d4ddff'}`,
           background: (t) =>
             t.palette.mode === 'dark'
-              ? 'radial-gradient(circle at top left, #27326a 0, #060716 60%)'
-              : 'linear-gradient(135deg, #eef3ff 0, #fdf7ff 70%)',
+              ? 'rgba(10, 12, 18, 0.66)'
+              : 'rgba(255, 255, 255, 0.78)',
+          backdropFilter: 'blur(14px)',
         }}
       >
         <Stack
           direction={{ xs: 'column', md: 'row' }}
           spacing={2}
-          alignItems={{ xs: 'flex-start', md: 'center' }}
+          alignItems={{ xs: 'stretch', md: 'center' }}
           justifyContent="space-between"
         >
-          <Stack direction="row" spacing={2}>
+          {/* Left: date range + quick chips */}
+          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} alignItems="center">
             <TextField
               label="Dari tanggal"
               type="date"
               size="small"
-              value={fromDate}
-              onChange={(e) => setFromDate(e.target.value)}
+              value={fromDraft}
+              onChange={(e) => setFromDraft(e.target.value)}
               InputLabelProps={{ shrink: true }}
             />
             <TextField
               label="Sampai tanggal"
               type="date"
               size="small"
-              value={toDate}
-              onChange={(e) => setToDate(e.target.value)}
+              value={toDraft}
+              onChange={(e) => setToDraft(e.target.value)}
               InputLabelProps={{ shrink: true }}
             />
+
+            <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap' }}>
+              <Chip
+                size="small"
+                label="7 hari"
+                onClick={() => {
+                  const r = rangeLastDays(7);
+                  setFromDraft(r.from);
+                  setToDraft(r.to);
+                }}
+              />
+              <Chip
+                size="small"
+                label="30 hari"
+                onClick={() => {
+                  const r = rangeLastDays(30);
+                  setFromDraft(r.from);
+                  setToDraft(r.to);
+                }}
+              />
+              <Chip
+                size="small"
+                label="Bulan ini"
+                onClick={() => {
+                  const r = rangeThisMonth();
+                  setFromDraft(r.from);
+                  setToDraft(r.to);
+                }}
+              />
+            </Stack>
           </Stack>
-          <Stack direction="row" spacing={1.5}>
-            <Button
-              variant="contained"
-              onClick={fetchRekap}
-              disabled={loading}
-              sx={{ borderRadius: 999, fontWeight: 600 }}
-            >
-              Terapkan
-            </Button>
-            <Button
-              variant="text"
-              onClick={() => {
-                setFromDate('');
-                setToDate('');
+
+          {/* Right: search + actions */}
+          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} alignItems="center">
+            <TextField
+              size="small"
+              value={tableSearch}
+              onChange={(e) => setTableSearch(e.target.value)}
+              placeholder="Cari kode / keterangan / vendor…"
+              sx={{ minWidth: { xs: '100%', sm: 320 } }}
+              InputProps={{
+                startAdornment: (
+                  <InputAdornment position="start">
+                    <SearchIcon fontSize="small" />
+                  </InputAdornment>
+                ),
+                endAdornment: tableSearch ? (
+                  <InputAdornment position="end">
+                    <IconButton size="small" onClick={() => setTableSearch('')}>
+                      <ClearIcon fontSize="small" />
+                    </IconButton>
+                  </InputAdornment>
+                ) : null,
               }}
-              disabled={loading}
-            >
-              Reset
-            </Button>
+            />
+
+            <Stack direction="row" spacing={1.5}>
+              <Button
+                variant="contained"
+                onClick={handleApply}
+                disabled={loading}
+                sx={{ borderRadius: 999, fontWeight: 700 }}
+              >
+                Terapkan
+              </Button>
+              <Button variant="text" onClick={handleResetFilters} disabled={loading}>
+                Reset
+              </Button>
+            </Stack>
           </Stack>
         </Stack>
       </Paper>
@@ -357,63 +503,136 @@ function RekapPage() {
           sx={{
             p: 2.5,
             borderRadius: 3,
-            border: (t) =>
-              `1px solid ${t.palette.mode === 'dark' ? '#242b4b' : '#d4ddff'}`,
+            border: (t) => `1px solid ${t.palette.mode === 'dark' ? '#242b4b' : '#d4ddff'}`,
           }}
         >
           <Box
             sx={{
               display: 'flex',
               justifyContent: 'space-between',
-              alignItems: 'center',
+              alignItems: 'flex-start',
               mb: 2,
               flexWrap: 'wrap',
               gap: 1.5,
             }}
           >
-            <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
-              {rekap.total_rows} baris, total nominal Rp {formatIDR(rekap.total_amount || 0)}
-            </Typography>
-            <Typography variant="body2" sx={{ color: 'text.secondary' }}>
-              Periode:{' '}
-              {rekap.from || rekap.to
-                ? `${rekap.from || 'awal'} s/d ${rekap.to || 'sekarang'}`
-                : 'semua waktu'}
-            </Typography>
+            <Box>
+              <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>
+                {tableSearch
+                  ? `${rowItems.length} dari ${rekap.total_rows} baris`
+                  : `${rekap.total_rows} baris`}{' '}
+                • total Rp {formatIDR(visibleAmount)}
+              </Typography>
+              <Typography variant="body2" sx={{ color: 'text.secondary', mt: 0.25 }}>
+                Klik baris untuk membuka dokumen terkait (jika tersedia).
+              </Typography>
+            </Box>
+
+            <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap' }}>
+              <Chip
+                size="small"
+                label={
+                  rekap.from || rekap.to
+                    ? `Periode: ${rekap.from || 'awal'} s/d ${rekap.to || 'sekarang'}`
+                    : 'Periode: semua waktu'
+                }
+              />
+            </Stack>
           </Box>
 
-          <Table size="small">
-            <TableHead>
-              <TableRow>
-                {rekap.columns.map((col) => (
-                  <TableCell
-                    key={col}
-                    sx={{ fontWeight: 600, whiteSpace: 'nowrap' }}
-                  >
-                    {col}
-                  </TableCell>
-                ))}
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {rekap.rows.map((row, idx) => (
-                <TableRow
-                  key={idx}
-                  hover
-                  sx={{ cursor: rekap.meta && rekap.meta[idx] ? 'pointer' : 'default' }}
-                  onClick={() => handleRowClick(idx)}
-                >
-                  {row.map((cell, cIdx) => (
-                    <TableCell key={cIdx}>
-                      {cIdx === rekap.columns.length - 1 && typeof cell === 'number'
-                        ? formatIDR(cell)
-                        : cell}
+          <Divider sx={{ mb: 1.5 }} />
+
+          <TableContainer sx={{ maxHeight: 560, borderRadius: 2 }}>
+            <Table stickyHeader size="small">
+              <TableHead>
+                <TableRow>
+                  {rekap.columns.map((col) => (
+                    <TableCell key={col} sx={{ fontWeight: 800, whiteSpace: 'nowrap' }}>
+                      {col}
                     </TableCell>
                   ))}
+                  <TableCell sx={{ width: 52 }} />
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+              </TableHead>
+
+              <TableBody>
+                {paged.map(({ row, idx }) => {
+                  const canOpen = !!rekap?.meta?.[idx]?.document_code;
+
+                  return (
+                    <TableRow
+                      key={idx}
+                      hover
+                      onClick={() => {
+                        if (canOpen) handleRowClick(idx);
+                      }}
+                      sx={{
+                        cursor: canOpen ? 'pointer' : 'default',
+                        '&:hover': {
+                          backgroundColor: (t) =>
+                            canOpen
+                              ? t.palette.mode === 'dark'
+                                ? 'rgba(59, 130, 246, 0.10)'
+                                : 'rgba(59, 130, 246, 0.06)'
+                              : undefined,
+                        },
+                      }}
+                    >
+                      {row.map((cell, cIdx) => {
+                        const isNumeric = cIdx === idxNominal || cIdx === idxLiter;
+                        const isLongText =
+                          String(rekap.columns?.[cIdx] || '').toLowerCase() === 'keterangan';
+
+                        return (
+                          <TableCell
+                            key={cIdx}
+                            align={isNumeric ? 'right' : 'left'}
+                            sx={{
+                              whiteSpace: isLongText ? 'normal' : 'nowrap',
+                              maxWidth: isLongText ? 520 : undefined,
+                            }}
+                          >
+                            {formatCell(cell, cIdx)}
+                          </TableCell>
+                        );
+                      })}
+
+                      <TableCell align="right">
+                        {canOpen ? (
+                          <Tooltip title="Buka dokumen">
+                            <IconButton
+                              size="small"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleRowClick(idx);
+                              }}
+                            >
+                              <ArrowForwardIcon fontSize="small" />
+                            </IconButton>
+                          </Tooltip>
+                        ) : null}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </TableContainer>
+
+          <TablePagination
+            component="div"
+            count={rowItems.length}
+            page={page}
+            onPageChange={(_e, p) => setPage(p)}
+            rowsPerPage={rowsPerPage}
+            onRowsPerPageChange={(e) => {
+              setRowsPerPage(parseInt(e.target.value, 10));
+              setPage(0);
+            }}
+            rowsPerPageOptions={[10, 25, 50, 100]}
+            labelRowsPerPage="Baris per halaman"
+            labelDisplayedRows={({ from, to, count }) => `${from}-${to} dari ${count}`}
+          />
         </Paper>
       ) : (
         <Paper
