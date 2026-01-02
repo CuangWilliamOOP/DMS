@@ -93,6 +93,11 @@ const COMPANY_NAME_BY_CODE = {
   olm: 'PT. Ostor Lumbanbanjar Makmur',
 };
 
+const DIRECTORY_LABELS = {
+  qlola: 'Transaksi QLOLA',
+  rekap: 'Rekap',
+};
+
 // ----- Per-row tabs (Dokumen Pendukung / Bukti Pembayaran) -------------
 
 function PreviewTabs({ docsForRow, docId, docStatus, sectionIndex, itemIndex }) {
@@ -457,6 +462,8 @@ export default function DocumentPreviewPage() {
   const statusStyle =
     STATUS_CHIP_STYLES[doc.status] || STATUS_CHIP_STYLES.draft;
 
+  const dirLabel = dirKey ? DIRECTORY_LABELS[String(dirKey).toLowerCase()] || dirKey : null;
+
   return (
     <>
       <Box
@@ -506,19 +513,18 @@ export default function DocumentPreviewPage() {
                   underline="hover"
                   to={`/directory/${companyName}`}
                 >
-                  {(companyName || '')
-                    .replace('.', '')
-                    .replace('-', ' ')
-                    .toUpperCase()}
+                  {companyLabel}
                 </Link>
-              ) : null}
+              ) : (
+                <Typography color="text.primary">{companyLabel}</Typography>
+              )}
               {companyName && dirKey ? (
                 <Link
                   component={RouterLink}
                   underline="hover"
                   to={`/directory/${companyName}/${dirKey}`}
                 >
-                  {(dirKey || '').toUpperCase()}
+                  {dirLabel}
                 </Link>
               ) : null}
               <Typography color="text.primary">

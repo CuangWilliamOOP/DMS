@@ -6,6 +6,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import useIdleLogout from "./hooks/useIdleLogout";
 import API from "./services/api";
 import ColorModeProvider from "./theme/ColorModeProvider";
+import StagingSunsetDialog from "./components/StagingSunsetDialog";
 
 // Layout
 import MainLayout from './layouts/MainLayout';
@@ -36,6 +37,7 @@ function App() {
   return (
     <ColorModeProvider>
       <Router>
+        <StagingSunsetDialog />
         <Routes>
           {/* Auth */}
           <Route path="/" element={<Navigate to="/login" />} />

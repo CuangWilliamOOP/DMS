@@ -1,7 +1,8 @@
-# Staging Deployment Guide — Refresh (October 2025)
+# Deployment Notes — Staging + Production (Oct 2025, updated Jan 2026)
 This updates and complements the existing deployment doc. It captures fixes we applied during the 2025‑10 incident (media not serving, cache issues, wrong Python package), and standardizes Nginx + systemd so a fresh VPS reproduces the working state quickly.
 
 ## Table of Contents
+- [Update (Jan 2026): Production domain enabled (keep staging)](#update-jan-2026-production-domain-enabled-keep-staging)
 - [0) Quick checklist for a fresh VPS](#0-quick-checklist-for-a-fresh-vps)
 - [1) Canonical Nginx site (HTTPS)](#1-canonical-nginx-site-https)
   - [1.1 Cache behavior](#11-cache-behavior)
@@ -20,6 +21,39 @@ This updates and complements the existing deployment doc. It captures fixes we a
 ## Summary
 
 We moved parsing off the web tier and added a determinate progress UI.
+
+## Update (Jan 2026): Production domain enabled (keep staging)
+
+We enabled production on the **same VPS** while keeping staging online.
+
+**DNS (Exabytes):**
+- `@` (root) **A** → `<VPS_IP>`
+- `www` **CNAME** → `caw-dms.com`
+- `staging` **A** → `<VPS_IP>`
+
+**Nginx:**
+- Staging vhost: `/etc/nginx/sites-available/dms` (`server_name staging.caw-dms.com`)
+- Prod vhost: `/etc/nginx/sites-available/dms-prod` (`server_name caw-dms.com www.caw-dms.com`)
+- Both proxy `/api/` → `http://127.0.0.1:8000` and serve `/media/` via `alias` **before** the SPA fallback.
+
+**TLS:**
+```bash
+sudo certbot --nginx -d caw-dms.com -d www.caw-dms.com --redirect --agree-tos -m <email> -n
+```
+
+**Env (/etc/dms.env):** add production domains, then restart:
+```bash
+sudo systemctl restart dms
+```
+
+**Common pitfall:** `502` on prod `/api/` happens if Nginx proxies to the wrong port (was mistakenly `8001`). Always confirm:
+```bash
+sudo ss -tlnp | egrep ":8000|:8001"
+sudo tail -n 50 /var/log/nginx/error.log
+```
+
+**Optional UI:** show a staging decommission warning dialog/banner when the hostname is `staging.caw-dms.com` (link users to `caw-dms.com`).
+
 
 ## New/changed environment
 
@@ -53,184 +87,8 @@ We moved parsing off the web tier and added a determinate progress UI.
 
 * Add Celery async pipeline and Redis progress store.
 
-## Changelog snippet (Dec 2025) — Peta Kebun & Navigasi
-
-### TTU DMS – Peta Kebun & Navigasi
-
-This repository contains the **TTU Document Management System (DMS)** with an integrated **Peta Kebun (Farm Map)** module for visualizing estates, blocks, and block‑level metadata, plus a **navigation mode** that can locate users in the field.
-
----
-
-### 1. Peta Kebun (Farm Map)
-
-The Peta Kebun module provides an interactive 2.5D map (MapLibre) embedded in **Beranda** under the **PETA KEBUN** tab.
-
-#### Features
-
-* **Estate outline** rendered as a black boundary (no fill).
-* **Internal blocks** rendered as filled polygons with distinct, contrasting colors.
-* **Click block on map**:
-
-  * Shows a small popup with block code.
-  * Highlights the selected block with a red outline.
-  * Updates block metadata shown **below the map**.
-* **Block search (Cari Blok)**:
-
-  * Dropdown select to choose a block (options only; no mobile keyboard).
-  * Clicking **Cari Blok** zooms the map to that block and highlights it.
-
----
-
-### 2. Block Metadata (Komposisi)
-
-Block metadata comes from an Excel source (Komposisi) and is converted to JSON for fast access.
-
-#### Data Flow
-
-1. **Source**: `komposisi.xlsx` (per‑estate).
-2. **Conversion**: Python script converts XLSX → `blocks_meta.json`.
-3. **Backend API** serves the JSON.
-4. **Frontend** displays the data in a structured table.
-
-#### Display Rules
-
-* Metadata is shown **below the map**, not in a side panel.
-* Displayed in a **2‑column table** (Atribut | Nilai).
-* **Null / empty values are hidden**.
-* Column **"NO" is not displayed**.
-* **Tahun Tanam normalization**:
-
-  * Values like `2.016` are rendered as `2016`.
-* **Filter chips** allow users to focus on specific aspects:
-
-  * Ringkasan
-  * Luas
-  * Pokok
-  * Infrastruktur
-
----
-
-### 3. Map Data Structure (Backend)
-
-All map‑related assets are stored per estate under `backend/maps/`:
-
-```
-backend/
-  maps/
-    bunut1/
-      bunut1_outline.geojson   # Estate boundary
-      bunut1_blocks.geojson    # Block polygons
-      bunut1_blocks_meta.json  # Block metadata (from komposisi.xlsx)
-```
-
-#### API Endpoints
-
-(All endpoints require authentication.)
-
-* `GET /api/maps/<estate>/outline/`
-* `GET /api/maps/<estate>/blocks/`
-* `GET /api/maps/<estate>/blocks-meta/`
-
-Example:
-
-```
-GET /api/maps/bunut1/outline/
-GET /api/maps/bunut1/blocks/
-GET /api/maps/bunut1/blocks-meta/
-```
-
----
-
-### 4. Navigation Mode (Mulai Navigasi)
-
-A dedicated **fullscreen navigation page** is available for field use.
-
-#### How It Works
-
-* From Peta Kebun, click **Mulai Navigasi**.
-* Opens a fullscreen route:
-
-```
-/navigate/:estateCode
-```
-
-Example:
-
-```
-/navigate/bunut1?block=AA2
-```
-
-#### Features
-
-* Uses browser **Geolocation API** (HTTPS required).
-* Shows user position as a blue marker with accuracy circle.
-* Automatically checks distance to estate:
-
-  * If **> 5 km**, shows warning and disables auto‑centering.
-* Buttons:
-
-  * **Kembali** – exit navigation
-  * **Ke kebun** – fit map to estate
-  * **Ke saya** – center map on user position
-
-> Note: This is **position awareness**, not turn‑by‑turn routing.
-
----
-
-### 5. Frontend Components (Key Files)
-
-* `FarmMapPanel.withBlocks.jsx`
-
-  * Main Peta Kebun component
-  * Handles outline, blocks, selection, block metadata table
-
-* `FarmNavigationPage.jsx`
-
-  * Fullscreen navigation mode
-  * Handles geolocation, distance checks, and user marker
-
-* `HomePage.jsx`
-
-  * Hosts the **PETA KEBUN** tab
-
----
-
-### 6. Python Utilities
-
-#### XLSX → JSON (Block Metadata)
-
-Used to convert Komposisi Excel files into JSON consumed by the backend.
-
-Example usage:
-
-```bash
-python xlsx_to_blocks_meta_json.py \
-  --input komposisi.xlsx \
-  --output bunut1_blocks_meta.json
-```
-
----
-
-### 7. Notes & Constraints
-
-* Geolocation only works on **HTTPS** or `localhost`.
-* Desktop browsers may return less accurate positions than mobile GPS.
-* Block colors are algorithmically generated to maximize contrast with neighbors.
-
----
-
-### 8. Future Extensions
-
-* Color blocks by attribute (Tahun Tanam, TM class, status).
-* Link blocks to operational documents.
-* Add routing / directions (OSRM / Valhalla) if required.
-
----
-
-Maintained as part of the **TTU DMS** project.
-
 0) Quick checklist for a fresh VPS
-Point DNS staging.caw-dms.com → VPS IP.
+Point DNS staging.caw-dms.com and caw-dms.com/www.caw-dms.com → VPS IP.
 Install: git python3-venv python3-pip nginx nodejs npm certbot python3-certbot-nginx apache2-utils build-essential.
 Create /srv/dms/app, clone repo, create and activate venv.
 pip install -r backend/requirements.txt (ensure PyMuPDF is installed; see Appendix A).
@@ -241,7 +99,8 @@ Install dms.service (Gunicorn), enable and start it.
 Install Nginx site (includes /media/, /api/, and SPA fallback in the right order), test and reload.
 Issue TLS with Certbot. Verify.
 1) Canonical Nginx site (HTTPS)
-Put this at /etc/nginx/sites-available/dms, symlink to sites-enabled.
+Staging: put this at /etc/nginx/sites-available/dms, symlink to sites-enabled.
+Production: create a second vhost /etc/nginx/sites-available/dms-prod with server_name caw-dms.com www.caw-dms.com (same locations, same upstream).
 
 server {
     listen 80;
@@ -265,7 +124,7 @@ server {
 
     # 2) API → Gunicorn (timeouts sized for long parses)
     location /api/ {
-        proxy_pass http://127.0.0.1:8001;
+        proxy_pass http://127.0.0.1:8000;
         proxy_set_header Host               $host;
         proxy_set_header X-Real-IP          $remote_addr;
         proxy_set_header X-Forwarded-For    $proxy_add_x_forwarded_for;
@@ -298,8 +157,8 @@ Ensure only one active server { listen 443 … server_name staging.caw-dms.com; 
 # Django
 DJANGO_SETTINGS_MODULE=backend.settings
 DJANGO_SECRET_KEY=<strong-random-secret>
-DJANGO_ALLOWED_HOSTS=staging.caw-dms.com,127.0.0.1,localhost
-DJANGO_CSRF_TRUSTED_ORIGINS=https://staging.caw-dms.com
+DJANGO_ALLOWED_HOSTS=staging.caw-dms.com,caw-dms.com,www.caw-dms.com,127.0.0.1,localhost
+DJANGO_CSRF_TRUSTED_ORIGINS=https://staging.caw-dms.com,https://caw-dms.com,https://www.caw-dms.com
 DJANGO_HSTS_SECONDS=1209600
 
 # Database (Supabase Postgres)
@@ -329,7 +188,7 @@ Group=www-data
 WorkingDirectory=/srv/dms/app/backend
 EnvironmentFile=/etc/dms.env
 ExecStart=/srv/dms/app/.venv/bin/gunicorn backend.wsgi:application \
-  --workers 3 --bind 127.0.0.1:8001 --timeout 600 --access-logfile - --error-logfile -
+  --workers 3 --bind 127.0.0.1:8000 --timeout 600 --access-logfile - --error-logfile -
 Restart=always
 RestartSec=3
 
@@ -402,6 +261,8 @@ Keep this file authoritative. If you tweak live configs or timeouts, reflect the
 ## Summary
 
 We moved parsing off the web tier and added a determinate progress UI.
+
+
 
 * **Frontend:** determinate circular progress, polls `/api/progress/<job_id>/`, accepts **202** from `/api/parse-and-store/`.
 * **Backend:** Celery worker executes parsing; progress stored in Redis with TTL; web view enqueues and returns.
