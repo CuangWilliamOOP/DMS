@@ -36,6 +36,7 @@ export default function LoginPage() {
   const [destination, setDestination] = useState('');
   const [expiresIn, setExpiresIn] = useState(0);
   const [otp, setOtp] = useState('');
+  const [channel, setChannel] = useState(''); // 'email' | 'whatsapp'
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -46,12 +47,14 @@ export default function LoginPage() {
     const m = Math.ceil((s || 300) / 60);
     return Number.isFinite(m) && m > 0 ? m : 5;
   }, [expiresIn]);
+  const channelLabel = channel === 'whatsapp' ? 'WhatsApp' : 'Email';
 
   const resetToCreds = () => {
     setStage('creds');
     setChallengeId('');
     setDestination('');
     setExpiresIn(0);
+    setChannel('');
     setOtp('');
     setError('');
   };
@@ -68,6 +71,7 @@ export default function LoginPage() {
       setChallengeId(data.challenge_id);
       setDestination(data.destination);
       setExpiresIn(data.expires_in);
+      setChannel(data.channel || '');
       setOtp('');
       setStage('otp');
     } catch (err) {
@@ -116,6 +120,7 @@ export default function LoginPage() {
       setChallengeId(data.challenge_id);
       setDestination(data.destination);
       setExpiresIn(data.expires_in);
+      setChannel(data.channel || '');
       setOtp('');
       setStage('otp');
     } catch (err) {
@@ -199,7 +204,7 @@ export default function LoginPage() {
 
         <Typography variant="body2" sx={{ color: '#444', mb: 3, textAlign: 'center' }}>
           {isOtpStage
-            ? 'Masukkan kode OTP yang dikirim ke WhatsApp Anda.'
+            ? `Masukkan kode OTP yang dikirim ke ${channelLabel} Anda.`
             : 'Silakan login untuk masuk ke sistem DMS PT. TTU.'}
         </Typography>
 
@@ -211,7 +216,7 @@ export default function LoginPage() {
 
         {isOtpStage && destination ? (
           <Alert severity="info" sx={{ width: '100%', mb: 2 }}>
-            OTP dikirim ke WhatsApp <b>{destination}</b>. Berlaku sekitar <b>{otpMinutes} menit</b>.
+            OTP dikirim ke {channelLabel} <b>{destination}</b>. Berlaku sekitar <b>{otpMinutes} menit</b>.
           </Alert>
         ) : null}
 

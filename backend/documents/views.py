@@ -13,6 +13,8 @@ import math
 import time
 import uuid
 import secrets
+import smtplib
+from email.message import EmailMessage
 
 import fitz
 from PIL import Image, ImageDraw, ImageFont
@@ -62,6 +64,18 @@ OCR_MARKER_BUDGET = int(os.environ.get("OCR_MARKER_BUDGET", "2"))
 OTP_TTL_SECONDS = int(os.environ.get("OTP_TTL_SECONDS", "300"))  # 5 minutes
 OTP_MAX_ATTEMPTS = int(os.environ.get("OTP_MAX_ATTEMPTS", "5"))
 OTP_DEV_MODE = os.environ.get("OTP_DEV_MODE", "0") == "1"  # log OTP to server logs
+
+OTP_DELIVERY = (os.environ.get("OTP_DELIVERY") or "whatsapp").strip().lower()
+
+SMTP_HOST = (os.environ.get("SMTP_HOST") or "smtp.gmail.com").strip()
+SMTP_PORT = int(os.environ.get("SMTP_PORT") or "587")
+SMTP_USERNAME = (os.environ.get("SMTP_USERNAME") or "").strip()
+SMTP_PASSWORD = (os.environ.get("SMTP_PASSWORD") or "").strip()
+SMTP_USE_TLS = (os.environ.get("SMTP_USE_TLS") or "1") == "1"
+SMTP_USE_SSL = (os.environ.get("SMTP_USE_SSL") or "0") == "1"
+
+OTP_EMAIL_FROM = (os.environ.get("OTP_EMAIL_FROM") or SMTP_USERNAME).strip()
+OTP_EMAIL_SUBJECT = (os.environ.get("OTP_EMAIL_SUBJECT") or "Kode OTP DMS").strip()
 
 # --- Map data root (filesystem) --------------------------------------------
 # New location: backend/map/<estate_code>/...
@@ -323,6 +337,17 @@ def _mask_msisdn(msisdn: str | None) -> str:
     tail = s[-3:]
     return prefix + ("*" * max(3, len(s) - 7)) + tail
 
+def _mask_email(addr: str | None) -> str:
+    s = (addr or "").strip()
+    if not s or "@" not in s:
+        return "—"
+    local, domain = s.split("@", 1)
+    if len(local) <= 2:
+        masked_local = local[:1] + "*"
+    else:
+        masked_local = local[:1] + ("*" * (len(local) - 2)) + local[-1:]
+    return f"{masked_local}@{domain}"
+
 def _generate_otp_code() -> str:
     return f"{secrets.randbelow(1_000_000):06d}"
 
@@ -336,27 +361,146 @@ def _send_whatsapp_otp(to_number: str, code: str, purpose: str) -> None:
         return
     raise RuntimeError("WhatsApp OTP provider not configured")
 
-def _create_otp_challenge(*, user_id: int, purpose: str, to_number: str) -> dict:
+def _send_email_otp(to_email: str, code: str, purpose: str) -> None:
+        if getattr(settings, "DEBUG", False) or OTP_DEV_MODE:
+                logger.warning("[DEV OTP] purpose=%s to=%s code=%s", purpose, to_email, code)
+                return
+
+        if not SMTP_USERNAME or not SMTP_PASSWORD:
+                raise RuntimeError("SMTP not configured (missing SMTP_USERNAME/SMTP_PASSWORD).")
+
+        minutes = max(1, math.ceil(int(OTP_TTL_SECONDS) / 60))
+
+        purpose_label = "Login" if purpose == "login" else "Ganti Password" if purpose == "password_change" else purpose
+
+        subject = OTP_EMAIL_SUBJECT or "Kode OTP"
+
+        text_body = (
+                f"Nors Nusa Lab\n\n"
+                f"Kode OTP untuk {purpose_label}: {code}\n"
+                f"Berlaku {minutes} menit.\n\n"
+                "Jangan bagikan kode ini kepada siapa pun.\n"
+                "Jika Anda tidak meminta kode ini, abaikan email ini."
+        )
+
+        html_body = f"""\
+<!doctype html>
+<html>
+    <body style="margin:0;padding:0;background:#f5f7fb;font-family:Arial,Helvetica,sans-serif;">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="padding:24px 0;">
+            <tr>
+                <td align="center">
+                    <table role="presentation" width="560" cellspacing="0" cellpadding="0"
+                                 style="background:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e2e8f0;">
+                        <tr>
+                            <td style="padding:18px 22px;background:#0f172a;color:#ffffff;">
+                                <div style="font-size:16px;font-weight:700;letter-spacing:0.3px;">Nors Nusa Lab</div>
+                                <div style="font-size:12px;opacity:0.9;">Document Management System</div>
+                            </td>
+                        </tr>
+
+                        <tr>
+                            <td style="padding:22px;color:#0f172a;">
+                                <div style="font-size:14px;margin-bottom:10px;">
+                                    Kode OTP untuk <b>{purpose_label}</b>:
+                                </div>
+
+                                <div style="text-align:center;padding:14px 0;margin:12px 0;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;">
+                                    <div style="font-size:34px;font-weight:800;letter-spacing:6px;color:#111827;">{code}</div>
+                                </div>
+
+                                <div style="font-size:13px;color:#475569;">
+                                    Berlaku <b>{minutes} menit</b>. Jangan bagikan kode ini kepada siapa pun.
+                                </div>
+
+                                <hr style="border:none;border-top:1px solid #e2e8f0;margin:18px 0;" />
+
+                                <div style="font-size:12px;color:#64748b;line-height:1.5;">
+                                    Jika Anda tidak meminta kode ini, abaikan email ini.
+                                </div>
+                            </td>
+                        </tr>
+
+                        <tr>
+                            <td style="padding:14px 22px;background:#f8fafc;font-size:11px;color:#94a3b8;">
+                                © {datetime.now().year} Nors Nusa Lab
+                            </td>
+                        </tr>
+                    </table>
+                </td>
+            </tr>
+        </table>
+    </body>
+</html>
+"""
+
+        msg = EmailMessage()
+        msg["Subject"] = subject
+
+        # IMPORTANT: ini yang mengubah "william" -> "Nors Nusa Lab" di inbox
+        # (kalau OTP_EMAIL_FROM sudah "Nors Nusa Lab <...>", biarkan apa adanya)
+        msg["From"] = OTP_EMAIL_FROM or SMTP_USERNAME
+
+        msg["To"] = to_email
+        msg.set_content(text_body)
+        msg.add_alternative(html_body, subtype="html")
+
+        if SMTP_USE_SSL or SMTP_PORT == 465:
+                smtp = smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=20)
+        else:
+                smtp = smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=20)
+
+        with smtp:
+                smtp.ehlo()
+                if SMTP_USE_TLS and not (SMTP_USE_SSL or SMTP_PORT == 465):
+                        smtp.starttls()
+                        smtp.ehlo()
+                smtp.login(SMTP_USERNAME, SMTP_PASSWORD)
+                smtp.send_message(msg)
+
+        logger.info("Email OTP sent purpose=%s to=%s", purpose, _mask_email(to_email))
+
+def _create_otp_challenge(*, user_id: int, purpose: str, channel: str, destination: str) -> dict:
     challenge_id = uuid.uuid4().hex
     code = _generate_otp_code()
     now = int(time.time())
     exp = now + int(timedelta(seconds=OTP_TTL_SECONDS).total_seconds())
+
     payload = {
         "user_id": user_id,
         "purpose": purpose,
-        "to": to_number,
+        "channel": channel,
+        "to": destination,
         "code_hash": make_password(code),
         "attempts": 0,
         "max_attempts": OTP_MAX_ATTEMPTS,
         "created": now,
         "exp": exp,
     }
-    cache.set(_otp_key(challenge_id), payload, timeout=OTP_TTL_SECONDS)
-    _send_whatsapp_otp(to_number, code, purpose)
+
+    key = _otp_key(challenge_id)
+    try:
+        cache.set(key, payload, timeout=OTP_TTL_SECONDS)
+    except Exception as e:
+        logger.exception("OTP cache write failed: %s", e)
+        raise RuntimeError("OTP service sementara tidak tersedia. Coba lagi.") from e
+
+    try:
+        if channel == "email":
+            _send_email_otp(destination, code, purpose)
+        else:
+            _send_whatsapp_otp(destination, code, purpose)
+    except Exception:
+        cache.delete(key)
+        raise
+
+    masked = _mask_email(destination) if channel == "email" else _mask_msisdn(destination)
+
     return {
         "challenge_id": challenge_id,
-        "destination": _mask_msisdn(to_number),
+        "destination": masked,
         "expires_in": OTP_TTL_SECONDS,
+        "channel": channel,
     }
 
 def _verify_otp_challenge(*, challenge_id: str, code: str, purpose: str) -> tuple[dict, str | None]:
@@ -400,6 +544,28 @@ def otp_login_start(request):
     if not user:
         return Response({"error": "Invalid credentials"}, status=drf_status.HTTP_401_UNAUTHORIZED)
 
+    if OTP_DELIVERY == "email":
+        to_email = (getattr(user, "email", "") or "").strip()
+        if not to_email:
+            return Response(
+                {"error": "Email belum diatur untuk akun ini."},
+                status=drf_status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            data = _create_otp_challenge(
+                user_id=user.id, purpose="login", channel="email", destination=to_email
+            )
+        except RuntimeError as e:
+            return Response({"error": str(e)}, status=drf_status.HTTP_503_SERVICE_UNAVAILABLE)
+        except Exception as e:
+            logger.exception("OTP email send failed (login) user=%s: %s", user.id, e)
+            return Response(
+                {"error": "Gagal mengirim OTP via email. Coba lagi atau hubungi admin."},
+                status=drf_status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        return Response(data, status=drf_status.HTTP_200_OK)
+
+    # fallback (old behavior)
     settings_obj, _ = UserSettings.objects.get_or_create(user=user)
     to_number = (settings_obj.whatsapp_number or "").strip()
     if not to_number:
@@ -409,9 +575,17 @@ def otp_login_start(request):
         )
 
     try:
-        data = _create_otp_challenge(user_id=user.id, purpose="login", to_number=to_number)
+        data = _create_otp_challenge(
+            user_id=user.id, purpose="login", channel="whatsapp", destination=to_number
+        )
     except RuntimeError as e:
         return Response({"error": str(e)}, status=drf_status.HTTP_503_SERVICE_UNAVAILABLE)
+    except Exception as e:
+        logger.exception("OTP whatsapp failed (login) user=%s: %s", user.id, e)
+        return Response(
+            {"error": "Gagal mengirim OTP via WhatsApp. Coba lagi atau hubungi admin."},
+            status=drf_status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
 
     return Response(data, status=drf_status.HTTP_200_OK)
 
@@ -459,6 +633,29 @@ def otp_login_verify(request):
 @permission_classes([IsAuthenticated])
 def otp_password_change_start(request):
     user = request.user
+
+    if OTP_DELIVERY == "email":
+        to_email = (getattr(user, "email", "") or "").strip()
+        if not to_email:
+            return Response(
+                {"error": "Email belum diatur untuk akun ini."},
+                status=drf_status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            data = _create_otp_challenge(
+                user_id=user.id, purpose="password_change", channel="email", destination=to_email
+            )
+        except RuntimeError as e:
+            return Response({"error": str(e)}, status=drf_status.HTTP_503_SERVICE_UNAVAILABLE)
+        except Exception as e:
+            logger.exception("OTP email send failed (password_change) user=%s: %s", user.id, e)
+            return Response(
+                {"error": "Gagal mengirim OTP via email. Coba lagi atau hubungi admin."},
+                status=drf_status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        return Response(data, status=drf_status.HTTP_200_OK)
+
+    # fallback (old behavior)
     settings_obj, _ = UserSettings.objects.get_or_create(user=user)
     to_number = (settings_obj.whatsapp_number or "").strip()
     if not to_number:
@@ -468,49 +665,67 @@ def otp_password_change_start(request):
         )
 
     try:
-        data = _create_otp_challenge(user_id=user.id, purpose="password_change", to_number=to_number)
+        data = _create_otp_challenge(
+            user_id=user.id, purpose="password_change", channel="whatsapp", destination=to_number
+        )
     except RuntimeError as e:
         return Response({"error": str(e)}, status=drf_status.HTTP_503_SERVICE_UNAVAILABLE)
+    except Exception as e:
+        logger.exception("OTP whatsapp failed (password_change) user=%s: %s", user.id, e)
+        return Response(
+            {"error": "Gagal mengirim OTP via WhatsApp. Coba lagi atau hubungi admin."},
+            status=drf_status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
 
     return Response(data, status=drf_status.HTTP_200_OK)
 
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def otp_password_change_confirm(request):
-    user = request.user
+    """
+    Confirm OTP and change the authenticated user's password.
+    Body: { challenge_id, otp, new_password }
+    """
     challenge_id = (request.data.get("challenge_id") or "").strip()
     code = (request.data.get("otp") or "").strip()
     new_password = request.data.get("new_password") or ""
 
+    if not challenge_id:
+        return Response({"error": "challenge_id wajib diisi."}, status=drf_status.HTTP_400_BAD_REQUEST)
+    if len(code) != 6 or not code.isdigit():
+        return Response({"error": "OTP harus 6 digit."}, status=drf_status.HTTP_400_BAD_REQUEST)
     if not new_password:
-        return Response(
-            {"error": "Password baru wajib diisi."},
-            status=drf_status.HTTP_400_BAD_REQUEST,
-        )
+        return Response({"error": "Password baru wajib diisi."}, status=drf_status.HTTP_400_BAD_REQUEST)
 
     payload, err = _verify_otp_challenge(
-        challenge_id=challenge_id, code=code, purpose="password_change"
+        challenge_id=challenge_id,
+        code=code,
+        purpose="password_change",
     )
     if err:
         return Response({"error": err}, status=drf_status.HTTP_400_BAD_REQUEST)
 
-    if int(payload.get("user_id") or 0) != int(user.id):
-        return Response(
-            {"error": "OTP ini bukan untuk user saat ini."},
-            status=drf_status.HTTP_403_FORBIDDEN,
-        )
-
+    # OTP must belong to the currently authenticated user
     try:
-        validate_password(new_password, user=user)
-    except ValidationError as ve:
-        msgs = [str(m) for m in (getattr(ve, "messages", []) or [])]
+        otp_user_id = int(payload.get("user_id") or 0)
+    except Exception:
+        otp_user_id = 0
+
+    if otp_user_id != int(request.user.id):
+        return Response({"error": "OTP tidak valid untuk user ini."}, status=drf_status.HTTP_403_FORBIDDEN)
+
+    # Validate password using Django validators
+    try:
+        validate_password(new_password, user=request.user)
+    except ValidationError as e:
         return Response(
-            {"error": "Password baru tidak valid.", "details": msgs},
+            {"error": "Password tidak valid.", "details": list(e.messages)},
             status=drf_status.HTTP_400_BAD_REQUEST,
         )
 
-    user.set_password(new_password)
-    user.save(update_fields=["password"])
+    request.user.set_password(new_password)
+    request.user.save(update_fields=["password"])
+
     return Response({"ok": True}, status=drf_status.HTTP_200_OK)
 
 # --- Marker detection helpers (fast text + OCR fallback) ---

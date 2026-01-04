@@ -39,6 +39,7 @@ export default function ChangePasswordDialog({ open, onClose }) {
   const [challengeId, setChallengeId] = useState('');
   const [destination, setDestination] = useState('');
   const [expiresIn, setExpiresIn] = useState(0);
+  const [channel, setChannel] = useState(''); // 'email' | 'whatsapp'
 
   const [otp, setOtp] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -52,12 +53,16 @@ export default function ChangePasswordDialog({ open, onClose }) {
     return Number.isFinite(m) && m > 0 ? m : 5;
   }, [expiresIn]);
 
+  const channelLabel =
+    channel === 'whatsapp' ? 'WhatsApp' : channel === 'email' ? 'Email' : 'Email/WhatsApp';
+
   const reset = () => {
     setStage('idle');
     setLoading(false);
     setChallengeId('');
     setDestination('');
     setExpiresIn(0);
+    setChannel('');
     setOtp('');
     setNewPassword('');
     setConfirmNewPassword('');
@@ -74,9 +79,11 @@ export default function ChangePasswordDialog({ open, onClose }) {
     setLoading(true);
     try {
       const { data } = await API.post('/auth/password/start/', {});
+
       setChallengeId(data.challenge_id);
       setDestination(data.destination);
       setExpiresIn(data.expires_in);
+      setChannel(data.channel || '');
       setOtp('');
       setStage('otp');
     } catch (err) {
@@ -144,13 +151,13 @@ export default function ChangePasswordDialog({ open, onClose }) {
 
           {stage === 'idle' ? (
             <Alert severity="info">
-              Untuk keamanan, kami akan mengirim OTP ke WhatsApp yang terdaftar.
+              Untuk keamanan, kami akan mengirim OTP ke {channelLabel} yang terdaftar.
             </Alert>
           ) : null}
 
           {stage === 'otp' && destination ? (
             <Alert severity="info">
-              OTP dikirim ke WhatsApp <b>{destination}</b>. Berlaku sekitar{' '}
+              OTP dikirim ke {channelLabel} <b>{destination}</b>. Berlaku sekitar{' '}
               <b>{otpMinutes} menit</b>.
             </Alert>
           ) : null}

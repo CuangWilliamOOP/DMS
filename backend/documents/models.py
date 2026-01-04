@@ -257,6 +257,7 @@ class UserSettings(models.Model):
 
     # WhatsApp number (E.164), used for OTP (login & password change)
     # Example: +628123456789
+    # Note: if server sets OTP_DELIVERY=email, OTP uses user.email instead.
     whatsapp_number = models.CharField(max_length=32, blank=True, null=True)
 
     def __str__(self):
