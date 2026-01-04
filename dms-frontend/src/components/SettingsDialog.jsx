@@ -33,6 +33,7 @@ import LightModeIcon from "@mui/icons-material/LightMode";
 import { motion } from "framer-motion";
 import { ColorModeContext } from "../theme/ColorModeProvider";
 import API from "../services/api";
+import ChangePasswordDialog from "./ChangePasswordDialog";
 
 export default function PengaturanDialog({ open, onClose }) {
   const { mode, toggle: toggleMode } = useContext(ColorModeContext);
@@ -40,6 +41,7 @@ export default function PengaturanDialog({ open, onClose }) {
     localStorage.getItem("pref_notif_email") !== "false"
   );
   const [section, setSection] = useState("appearance"); // "appearance", "notifications", "security"
+  const [changePassOpen, setChangePassOpen] = React.useState(false);
 
   const isDark = mode === "dark";
 
@@ -439,7 +441,23 @@ export default function PengaturanDialog({ open, onClose }) {
                 >
                   Atur berapa lama aplikasi tetap aktif sebelum logout otomatis.
                 </Typography>
+
                 <KeamananTab />
+
+                <Box sx={{ mt: 2 }}>
+                  <Button
+                    variant="contained"
+                    onClick={() => setChangePassOpen(true)}
+                    sx={{ textTransform: "none", borderRadius: 2 }}
+                  >
+                    Ganti Password
+                  </Button>
+                </Box>
+
+                <ChangePasswordDialog
+                  open={changePassOpen}
+                  onClose={() => setChangePassOpen(false)}
+                />
               </Box>
             )}
           </Box>

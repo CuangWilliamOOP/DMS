@@ -1,6 +1,6 @@
 // File: src/pages/LoginPage.jsx
 
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   Box,
   TextField,
@@ -9,44 +9,128 @@ import {
   Paper,
   InputAdornment,
   IconButton,
+  Alert,
+  CircularProgress,
 } from '@mui/material';
 import LockOutlinedIcon from '@mui/icons-material/LockOutlined';
 import PersonIcon from '@mui/icons-material/Person';
+import SmsOutlinedIcon from '@mui/icons-material/SmsOutlined';
 import Visibility from '@mui/icons-material/Visibility';
 import VisibilityOff from '@mui/icons-material/VisibilityOff';
-import { useNavigate } from 'react-router-dom';
 import API from '../services/api';
 
+function extractApiError(err, fallback) {
+  const msg = err?.response?.data?.error || err?.response?.data?.detail;
+  if (typeof msg === 'string' && msg.trim()) return msg;
+  return fallback;
+}
+
 export default function LoginPage() {
+  const [stage, setStage] = useState('creds'); // 'creds' | 'otp'
+
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [showPass, setShowPass] = useState(false);
-  const navigate = useNavigate();
 
-  const handleSubmit = async (e) => {
+  const [challengeId, setChallengeId] = useState('');
+  const [destination, setDestination] = useState('');
+  const [expiresIn, setExpiresIn] = useState(0);
+  const [otp, setOtp] = useState('');
+
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const isOtpStage = stage === 'otp';
+  const otpMinutes = useMemo(() => {
+    const s = Number(expiresIn || 0);
+    const m = Math.ceil((s || 300) / 60);
+    return Number.isFinite(m) && m > 0 ? m : 5;
+  }, [expiresIn]);
+
+  const resetToCreds = () => {
+    setStage('creds');
+    setChallengeId('');
+    setDestination('');
+    setExpiresIn(0);
+    setOtp('');
+    setError('');
+  };
+
+  const startOtp = async (e) => {
     e.preventDefault();
+    setError('');
+    setLoading(true);
     try {
-      const res = await API.post('/token/', { username, password });
-      localStorage.setItem('accessToken', res.data.access);
-      localStorage.setItem('refreshToken', res.data.refresh);
-      localStorage.setItem('username', username);
-
-      // Fetch user's group(s)
-      const res2 = await API.get('/me/');
-      // You can map the group to your app role logic here:
-      let role = 'employee';
-      if (res2.data.groups.includes('owner')) role = 'owner';
-      else if (res2.data.groups.includes('boss')) role = 'higher-up';
-      else if (res2.data.groups.includes('admin')) role = 'employee';
-
-  localStorage.setItem('role', role);
-  window.dispatchEvent(new Event("theme_update"));
-  // Hard reload with cache-busting query to ensure latest bundle is used post-login
-  window.location.replace(`/home?v=${Date.now()}`);
+      const { data } = await API.post('/auth/login/start/', {
+        username: (username || '').trim(),
+        password,
+      });
+      setChallengeId(data.challenge_id);
+      setDestination(data.destination);
+      setExpiresIn(data.expires_in);
+      setOtp('');
+      setStage('otp');
     } catch (err) {
-      alert('Username atau password salah!');
+      setError(extractApiError(err, 'Username atau password salah!'));
+    } finally {
+      setLoading(false);
     }
   };
+
+  const verifyOtp = async (e) => {
+    e.preventDefault();
+    setError('');
+    setLoading(true);
+    try {
+      const { data } = await API.post('/auth/login/verify/', {
+        challenge_id: challengeId,
+        otp,
+      });
+
+      localStorage.setItem('accessToken', data.access);
+      localStorage.setItem('refreshToken', data.refresh);
+      localStorage.setItem('username', data.username || username);
+      localStorage.setItem('role', data.role || 'employee');
+      if (Array.isArray(data.groups)) {
+        localStorage.setItem('groups', JSON.stringify(data.groups));
+      }
+
+      window.dispatchEvent(new Event('theme_update'));
+      // Hard reload with cache-busting query to ensure latest bundle is used post-login
+      window.location.replace(`/home?v=${Date.now()}`);
+    } catch (err) {
+      setError(extractApiError(err, 'OTP salah.'));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const resendOtp = async () => {
+    setError('');
+    setLoading(true);
+    try {
+      const { data } = await API.post('/auth/login/start/', {
+        username: (username || '').trim(),
+        password,
+      });
+      setChallengeId(data.challenge_id);
+      setDestination(data.destination);
+      setExpiresIn(data.expires_in);
+      setOtp('');
+      setStage('otp');
+    } catch (err) {
+      setError(extractApiError(err, 'Gagal mengirim OTP.'));
+      resetToCreds();
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const canSubmit =
+    !loading &&
+    (isOtpStage
+      ? (otp || '').trim().length === 6 && !!challengeId
+      : (username || '').trim().length > 0 && (password || '').length > 0);
 
   return (
     <Box
@@ -57,7 +141,8 @@ export default function LoginPage() {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        background: 'linear-gradient(120deg, #1976d2 0%, #42a5f5 50%, #7e57c2 100%)',
+        background:
+          'linear-gradient(120deg, #1976d2 0%, #42a5f5 50%, #7e57c2 100%)',
         position: 'fixed',
         top: 0,
         left: 0,
@@ -93,7 +178,11 @@ export default function LoginPage() {
             boxShadow: '0 4px 18px rgba(34,50,84,0.08)',
           }}
         >
-          <LockOutlinedIcon sx={{ color: '#fff', fontSize: 38 }} />
+          {isOtpStage ? (
+            <SmsOutlinedIcon sx={{ color: '#fff', fontSize: 38 }} />
+          ) : (
+            <LockOutlinedIcon sx={{ color: '#fff', fontSize: 38 }} />
+          )}
         </Box>
 
         <Typography
@@ -105,18 +194,30 @@ export default function LoginPage() {
             color: '#23305A',
           }}
         >
-          Selamat Datang
+          {isOtpStage ? 'Verifikasi OTP' : 'Selamat Datang'}
         </Typography>
-        <Typography
-          variant="body2"
-          sx={{ color: '#444', mb: 3, textAlign: 'center' }}
-        >
-          Silakan login untuk masuk ke sistem DMS PT. TTU.
+
+        <Typography variant="body2" sx={{ color: '#444', mb: 3, textAlign: 'center' }}>
+          {isOtpStage
+            ? 'Masukkan kode OTP yang dikirim ke WhatsApp Anda.'
+            : 'Silakan login untuk masuk ke sistem DMS PT. TTU.'}
         </Typography>
+
+        {error ? (
+          <Alert severity="error" sx={{ width: '100%', mb: 2 }}>
+            {error}
+          </Alert>
+        ) : null}
+
+        {isOtpStage && destination ? (
+          <Alert severity="info" sx={{ width: '100%', mb: 2 }}>
+            OTP dikirim ke WhatsApp <b>{destination}</b>. Berlaku sekitar <b>{otpMinutes} menit</b>.
+          </Alert>
+        ) : null}
 
         <Box
           component="form"
-          onSubmit={handleSubmit}
+          onSubmit={isOtpStage ? verifyOtp : startOtp}
           sx={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 2 }}
         >
           <TextField
@@ -126,6 +227,7 @@ export default function LoginPage() {
             onChange={(e) => setUsername(e.target.value)}
             required
             fullWidth
+            disabled={isOtpStage || loading}
             InputProps={{
               startAdornment: (
                 <InputAdornment position="start">
@@ -134,6 +236,7 @@ export default function LoginPage() {
               ),
             }}
           />
+
           <TextField
             label="Password"
             variant="outlined"
@@ -142,6 +245,7 @@ export default function LoginPage() {
             onChange={(e) => setPassword(e.target.value)}
             required
             fullWidth
+            disabled={isOtpStage || loading}
             InputProps={{
               startAdornment: (
                 <InputAdornment position="start">
@@ -155,6 +259,7 @@ export default function LoginPage() {
                     onClick={() => setShowPass((s) => !s)}
                     edge="end"
                     size="small"
+                    disabled={isOtpStage || loading}
                   >
                     {showPass ? <VisibilityOff /> : <Visibility />}
                   </IconButton>
@@ -163,9 +268,34 @@ export default function LoginPage() {
             }}
           />
 
+          {isOtpStage ? (
+            <TextField
+              label="Kode OTP"
+              variant="outlined"
+              value={otp}
+              onChange={(e) => {
+                const cleaned = (e.target.value || '').replace(/\D/g, '').slice(0, 6);
+                setOtp(cleaned);
+              }}
+              required
+              fullWidth
+              disabled={loading}
+              inputProps={{ inputMode: 'numeric', pattern: '\\d*', maxLength: 6 }}
+              InputProps={{
+                startAdornment: (
+                  <InputAdornment position="start">
+                    <SmsOutlinedIcon color="primary" />
+                  </InputAdornment>
+                ),
+              }}
+              helperText="6 digit"
+            />
+          ) : null}
+
           <Button
             variant="contained"
             type="submit"
+            disabled={!canSubmit}
             sx={{
               py: 1.3,
               mt: 1,
@@ -178,9 +308,37 @@ export default function LoginPage() {
             }}
             fullWidth
           >
-            Login
+            {loading ? (
+              <CircularProgress size={22} color="inherit" />
+            ) : isOtpStage ? (
+              'Verifikasi'
+            ) : (
+              'Kirim OTP'
+            )}
           </Button>
+
+          {isOtpStage ? (
+            <Box sx={{ display: 'flex', gap: 1, mt: 0.5 }}>
+              <Button
+                variant="text"
+                onClick={resendOtp}
+                disabled={loading}
+                sx={{ flex: 1, fontWeight: 600 }}
+              >
+                Kirim ulang OTP
+              </Button>
+              <Button
+                variant="text"
+                onClick={resetToCreds}
+                disabled={loading}
+                sx={{ flex: 1, fontWeight: 600 }}
+              >
+                Ganti akun
+              </Button>
+            </Box>
+          ) : null}
         </Box>
+
         <Box sx={{ mt: 4, textAlign: 'center', fontSize: 13, color: '#999' }}>
           © {new Date().getFullYear()} PT. TTU • skip5
         </Box>

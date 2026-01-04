@@ -255,5 +255,9 @@ class UserSettings(models.Model):
     THEME_CHOICES = [("light", "Light"), ("dark", "Dark")]
     theme_mode = models.CharField(max_length=10, choices=THEME_CHOICES, default="light")
 
+    # WhatsApp number (E.164), used for OTP (login & password change)
+    # Example: +628123456789
+    whatsapp_number = models.CharField(max_length=32, blank=True, null=True)
+
     def __str__(self):
         return f"{self.user.username} settings"

@@ -16,6 +16,10 @@ from documents.views import (
     kebun_outline_view,
     kebun_blocks_view,
     kebun_blocks_meta_view,
+    otp_login_start,
+    otp_login_verify,
+    otp_password_change_start,
+    otp_password_change_confirm,
 )
 from django.conf import settings
 from django.conf.urls.static import static
@@ -38,6 +42,10 @@ urlpatterns = [
     path('api/progress/<str:job_id>/', progress_view, name='progress_view'),
     path('api/rekap/<str:company_code>/<str:rekap_key>/', rekap_view, name='rekap'),
     path('api/login/', login_view, name='login'),  # <-- add this route
+    path("api/auth/login/start/", otp_login_start, name="otp_login_start"),
+    path("api/auth/login/verify/", otp_login_verify, name="otp_login_verify"),
+    path("api/auth/password/start/", otp_password_change_start, name="otp_password_change_start"),
+    path("api/auth/password/confirm/", otp_password_change_confirm, name="otp_password_change_confirm"),
     path('api/token/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('api/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
     path('api/me/', user_info),  # <-- add user_info endpoint

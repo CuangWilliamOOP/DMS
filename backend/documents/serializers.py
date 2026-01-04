@@ -46,7 +46,8 @@ class SupportingDocumentSerializer(serializers.ModelSerializer):
 class UserSettingsSerializer(serializers.ModelSerializer):
     class Meta:
         model = UserSettings
-        fields = ("idle_timeout", "theme_mode")
+        fields = ("idle_timeout", "theme_mode", "whatsapp_number")
+        read_only_fields = ("whatsapp_number",)
 
 
 class PaymentProofSerializer(serializers.ModelSerializer):

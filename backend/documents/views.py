@@ -10,13 +10,19 @@ import json
 from pathlib import Path
 from functools import lru_cache
 import math
+import time
+import uuid
+import secrets
 
 import fitz
 from PIL import Image, ImageDraw, ImageFont
 from django.conf import settings
 from PIL import ImageOps
-from datetime import datetime, date
-from django.contrib.auth import authenticate
+from datetime import datetime, date, timedelta
+from django.contrib.auth import authenticate, get_user_model
+from django.contrib.auth.hashers import make_password, check_password
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError
 from django.core.files import File
 from django.http import JsonResponse
 from django.core.cache import cache
@@ -52,6 +58,10 @@ logger = logging.getLogger(__name__)
 
 PROGRESS_TTL = 60 * 60  # 1h
 OCR_MARKER_BUDGET = int(os.environ.get("OCR_MARKER_BUDGET", "2"))
+
+OTP_TTL_SECONDS = int(os.environ.get("OTP_TTL_SECONDS", "300"))  # 5 minutes
+OTP_MAX_ATTEMPTS = int(os.environ.get("OTP_MAX_ATTEMPTS", "5"))
+OTP_DEV_MODE = os.environ.get("OTP_DEV_MODE", "0") == "1"  # log OTP to server logs
 
 # --- Map data root (filesystem) --------------------------------------------
 # New location: backend/map/<estate_code>/...
@@ -300,649 +310,208 @@ def progress_view(request, job_id: str):
         return JsonResponse({"job_id": job_id, "percent": 0, "stage": "pending"})
     return JsonResponse(data)
 
-class DocumentViewSet(viewsets.ModelViewSet):
-    queryset = Document.objects.all().order_by("-created_at")
-    serializer_class = DocumentSerializer
-    permission_classes = [IsAuthenticated]
-
-    def _all_items_have_payment_proof(self, doc: Document) -> bool:
-        """Every meaningful table row must have a PaymentProof; blank rows & summary sections ignored."""
-        proofs = set(doc.payment_proofs.values_list("section_index", "item_index"))
-        for s_idx, sec in enumerate(doc.parsed_json or []):
-            if isinstance(sec, dict) and "grand_total" in sec:
-                continue  # skip summary/grand total blocks
-            tbl = sec.get("table") or []
-            if not tbl or len(tbl) < 2:
-                continue
-            hdr = tbl[0] or []
-            ref_i = hdr.index("REF_CODE") if "REF_CODE" in hdr else None
-            pay_i = hdr.index("PAY_REF") if "PAY_REF" in hdr else None
-            for r_idx, row in enumerate(tbl[1:]):
-                meaningful = any(
-                    str(v or "").strip() for i, v in enumerate(row) if i not in (ref_i, pay_i)
-                )
-                if not meaningful:
-                    continue
-                if (s_idx, r_idx) not in proofs:
-                    return False
-        return True
-
-    def _apply_status_transition(self, doc: Document, new_status: str, payload: dict):
-        """Business‑rule enforcement for status field."""
-        if new_status == "belum_disetujui":
-            if not doc.supporting_docs.exists():
-                return Response(
-                    {"detail": "Minimal satu dokumen pendukung diperlukan."},
-                    status=drf_status.HTTP_400_BAD_REQUEST,
-                )
-            doc.finished_draft_at = timezone.now()
-
-        elif new_status == "disetujui":
-            # BLOCK approval if any supporting doc is not 'disetujui'
-            unapproved = doc.supporting_docs.exclude(status="disetujui")
-            if unapproved.exists():
-                return Response(
-                    {"detail": "Semua dokumen pendukung harus disetujui sebelum dokumen utama dapat disetujui."},
-                    status=drf_status.HTTP_400_BAD_REQUEST,
-                )
-            doc.approved_at = timezone.now()
-
-        elif new_status == "rejected":
-            comment = payload.get("reject_comment")
-            if not comment:
-                return Response(
-                    {"detail": "Alasan penolakan harus diisi."},
-                    status=drf_status.HTTP_400_BAD_REQUEST,
-                )
-            doc.reject_comment = comment
-            doc.rejected_at = timezone.now()
-
-        elif new_status == "sudah_dibayar":
-            # Require full PaymentProof coverage only
-            if not self._all_items_have_payment_proof(doc):
-                return Response(
-                    {"detail": "Semua item harus punya bukti pembayaran sebelum menyelesaikan pembayaran."},
-                    status=drf_status.HTTP_400_BAD_REQUEST,
-                )
-            doc.paid_at = timezone.now()
-            doc.archived = True
-            doc.archived_at = timezone.now()
-
-        doc.status = new_status
-        return None
-
-    def partial_update(self, request, *args, **kwargs):
-        instance = self.get_object()
-
-        # Force recalc on every parsed_json update
-        new_parsed = request.data.get("parsed_json", None)
-        if new_parsed is not None:
-            request.data["parsed_json"] = recalc_totals(new_parsed)
-
-        item_pay_refs: dict | None = request.data.pop("item_payment_refs", None)
-        serializer = self.get_serializer(instance, data=request.data, partial=True)
-        serializer.is_valid(raise_exception=True)
-        new_status = serializer.validated_data.pop("status", None)
-        instance = serializer.save()
-
-        if item_pay_refs:
-            changed = False
-            all_refs = set()
-            for section in instance.parsed_json or []:
-                tbl = section.get("table")
-                if not tbl:
-                    continue
-                headers = tbl[0]
-                if "PAY_REF" not in headers:
-                    headers.append("PAY_REF")
-                ref_idx = headers.index("REF_CODE")
-                pay_idx = headers.index("PAY_REF")
-
-                for row in tbl[1:]:
-                    if len(row) <= ref_idx:
-                        continue
-                    ref_code = row[ref_idx]
-                    all_refs.add(ref_code)
-                    if ref_code in item_pay_refs:
-                        while len(row) <= pay_idx:
-                            row.append("")
-                        row[pay_idx] = item_pay_refs[ref_code]
-                        changed = True
-
-            unknown = set(item_pay_refs) - all_refs
-            if unknown:
-                return Response(
-                    {"detail": f"Unknown REF_CODE(s): {', '.join(unknown)}"},
-                    status=drf_status.HTTP_400_BAD_REQUEST,
-                )
-            if changed:
-                instance.save(update_fields=["parsed_json"])
-
-        if new_status and new_status != instance.status:
-            err = self._apply_status_transition(instance, new_status, request.data)
-            if err:
-                return err
-            instance.save()
-
-        return Response(self.get_serializer(instance).data)
-
-    update = partial_update
-
-    @action(detail=False, url_path='by-code/(?P<code>[^/]+)', methods=['get'])
-    def by_code(self, request, code=None):
-        try:
-            doc = Document.objects.get(document_code=code)
-        except Document.DoesNotExist:
-            return Response({'detail': 'Not found.'}, status=404)
-        serializer = self.get_serializer(doc)
-        return Response(serializer.data)
-
-
-class SupportingDocumentViewSet(viewsets.ModelViewSet):
-    serializer_class = SupportingDocumentSerializer
-    permission_classes = [IsAuthenticated]
-
-    def get_queryset(self):
-        qs = SupportingDocument.objects.all().order_by("supporting_doc_sequence")
-        main_id = self.request.query_params.get("main_document")
-        doc_type = self.request.query_params.get("doc_type")
-        if main_id:
-            qs = qs.filter(main_document_id=main_id)
-        if doc_type:
-            qs = qs.filter(doc_type=doc_type)
-        return qs
-
-    # 🔒 Block edits when main doc is archived / paid
-    def _ensure_main_doc_is_editable(self, main_doc: Document):
-        if main_doc.archived or main_doc.status == "sudah_dibayar":
-            raise PermissionDenied("Dokumen di direktori; tidak bisa diubah.")
-
-    def perform_create(self, serializer):
-        item_ref_code = self.request.data.get("item_ref_code")
-        if not item_ref_code:  # ← restore guard
-            return Response(
-                {"detail": "item_ref_code diperlukan."},
-                status=drf_status.HTTP_400_BAD_REQUEST,
-            )
-        main_doc = serializer.validated_data["main_document"]
-        self._ensure_main_doc_is_editable(main_doc)
-
-        # Enforce only one proof_of_payment per item
-        if serializer.validated_data.get("doc_type") == "proof_of_payment":
-            existing = SupportingDocument.objects.filter(
-                main_document=main_doc,
-                item_ref_code=item_ref_code,
-                doc_type="proof_of_payment",
-            )
-            if existing.exists():
-                return Response(
-                    {"detail": "Sudah ada bukti pembayaran untuk item ini."},
-                    status=drf_status.HTTP_400_BAD_REQUEST,
-                )
-
-        latest = (
-            SupportingDocument.objects.filter(
-                main_document=main_doc, item_ref_code=item_ref_code
-            )
-            .order_by("-supporting_doc_sequence")
-            .first()
-        )
-        next_seq = latest.supporting_doc_sequence + 1 if latest else 1
-        sdoc = serializer.save(item_ref_code=item_ref_code, supporting_doc_sequence=next_seq)
-        _ensure_preview_for_supporting_doc(sdoc)
-
-    def partial_update(self, request, *args, **kwargs):
-        instance: SupportingDocument = self.get_object()
-        # 🔒 lock after archive/paid
-        self._ensure_main_doc_is_editable(instance.main_document)
-
-        if request.data.get("status") == "disetujui":
-            instance.approved_at = timezone.now()
-            instance.status = "disetujui"
-            if instance.file:
-                self._embed_stamp(instance)
-            instance.save()
-        return super().partial_update(request, *args, **kwargs)
-
-    def destroy(self, request, *args, **kwargs):
-        instance: SupportingDocument = self.get_object()
-        # 🔒 lock after archive/paid
-        self._ensure_main_doc_is_editable(instance.main_document)
-        return super().destroy(request, *args, **kwargs)
-
-    def _embed_stamp(self, instance: SupportingDocument):
-        """Stamp file only once; skip if already stamped."""
-        file_path = instance.file.path
-        base, ext = os.path.splitext(os.path.basename(file_path))
-
-        # Guard: avoid infinite re‑stamping loops
-        if base.endswith("_APPROVED"):
-            return
-
-        timestamp = timezone.now().strftime("%d-%m-%Y %H:%M")
-        with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
-            temp_path = tmp.name
-
-        if ext == ".pdf":
-            doc = fitz.open(file_path)
-            page = doc[0]
-            rect = fitz.Rect(50, 50, 300, 120)
-            page.insert_textbox(
-                rect,
-                f"DISETUJUI\n{timestamp}",
-                fontsize=18,
-                color=(0, 0.6, 0),
-                align=fitz.TEXT_ALIGN_CENTER,
-            )
-            doc.save(temp_path)
-            doc.close()
-
-            # replace file with stamped copy
-            new_basename = f"{base}_APPROVED{ext}"
-            with open(temp_path, "rb") as fp:
-                instance.file.save(new_basename, File(fp), save=False)
-            os.remove(temp_path)
-
-            # regenerate preview from stamped PDF (first page)
-            pdf = fitz.open(instance.file.path)
-            pg = pdf[0]
-            pix = pg.get_pixmap(matrix=fitz.Matrix(1.5, 1.5), alpha=False)
-            tmp_png = tempfile.mkstemp(suffix=".png")[1]
-            with open(tmp_png, "wb") as f:
-                f.write(pix.tobytes("png"))
-            fileobj, ext_prev = _encode_preview(tmp_png, f"{base}_APPROVED_PREVIEW")
-            instance.preview_image.save(f"{base}_APPROVED_PREVIEW{ext_prev}", fileobj, save=False)
-            os.remove(tmp_png)
-        else:
-            img = Image.open(file_path).convert("RGBA")
-            stamp_layer = Image.new("RGBA", img.size, (255, 255, 255, 0))
-            draw = ImageDraw.Draw(stamp_layer)
-            font_path = os.path.join(settings.BASE_DIR, "arial.ttf")
-            try:
-                font = ImageFont.truetype(font_path, 36)
-            except OSError:
-                font = ImageFont.load_default()
-            draw.multiline_text(
-                (50, 50),
-                f"APPROVED{timestamp}",
-                font=font,
-                fill=(255, 0, 0, 180),
-                spacing=5,
-            )
-            stamped = Image.alpha_composite(img, stamp_layer)
-            format_to_use = "PNG" if ext == ".png" else "JPEG"
-            stamped.convert("RGB").save(temp_path, format=format_to_use)
-
-            new_basename = f"{base}_APPROVED{ext}"
-            with open(temp_path, "rb") as fp:
-                instance.file.save(new_basename, File(fp), save=False)
-
-            os.remove(temp_path)
-
-
-# -----------------------------------------------------------------------------
-#                    GPT‑VISION PARSE ➜ CREATE DOCUMENT
-# -----------------------------------------------------------------------------
-# ---- Helpers for multi‑page table parsing (PDF) ----
-def _save_page_image(pdf_doc, page_index: int, dpi: int = 160) -> str:
-    page = pdf_doc.load_page(page_index)
-    mat = fitz.Matrix(dpi / 72, dpi / 72)
-    pix = page.get_pixmap(matrix=mat, alpha=False)
-    fd, path = tempfile.mkstemp(suffix=".png"); os.close(fd)
-    try:
-        pix.save(path)
-        return path
-    except Exception as e:
-        try:
-            os.remove(path)
-        except Exception:
-            pass
-        fd2, path2 = tempfile.mkstemp(suffix=".jpg"); os.close(fd2)
-        with open(path2, "wb") as f:
-            f.write(pix.tobytes("jpeg"))
-        logger.warning("PNG save failed on page %s, fell back to JPEG: %s", page_index, e)
-        return path2
-
-# Preview encoder
-def _encode_preview(image_path, base_name):
-    max_w = int(getattr(settings, "PREVIEW_IMAGE_MAX_WIDTH", 1600))
-    quality = int(getattr(settings, "PREVIEW_IMAGE_QUALITY", 80))
-
-    im = Image.open(image_path).convert("RGB")
-    w, h = im.size
-    if w > max_w:
-        im = im.resize((max_w, int(h * (max_w / w))), Image.LANCZOS)
-
-    buf = io.BytesIO()
-    ext = ".webp"
-    try:
-        im.save(buf, "WEBP", quality=quality, method=6)
-    except Exception:
-        buf = io.BytesIO()
-        im.save(buf, "JPEG", quality=85, optimize=True, progressive=True)
-        ext = ".jpg"
-    buf.seek(0)
-    return File(buf), ext
-
-# --- On-the-fly preview (no server-side persistence) ---
-def _choose_fmt(accept: str):
-    a = (accept or "").lower()
-    if "image/webp" in a:
-        return "WEBP", "image/webp"
-    return "JPEG", "image/jpeg"
-
-def _open_as_pil(path: str) -> Image.Image:
-    ext = os.path.splitext(path)[1].lower()
-    if ext == ".pdf":
-        doc = fitz.open(path)
-        if doc.page_count == 0:
-            raise ValueError("Empty PDF")
-        pg = doc[0]
-        pix = pg.get_pixmap(matrix=fitz.Matrix(1.5, 1.5), alpha=False)
-        return Image.open(io.BytesIO(pix.tobytes("png"))).convert("RGB")
-    # auto-rotate based on EXIF
-    return ImageOps.exif_transpose(Image.open(path))
-
-@api_view(["GET"])
-@permission_classes([AllowAny])
-def sdoc_preview(request, pk: int):
-    from .models import SupportingDocument
-    sd = get_object_or_404(SupportingDocument, pk=pk)
-    w = int(request.GET.get("w", 800))
-    w = max(200, min(w, 1600))
-    q = int(getattr(settings, "PREVIEW_IMAGE_QUALITY", 80))
-
-    img = _open_as_pil(sd.file.path).convert("RGB")
-    ow, oh = img.size
-    if ow > w:
-        img = img.resize((w, int(oh * (w / ow))), Image.LANCZOS)
-
-    fmt_q = (request.GET.get("fmt") or "").lower()
-    if fmt_q == "webp":
-        fmt, ctype = "WEBP", "image/webp"
-    elif fmt_q in ("jpg", "jpeg"):
-        fmt, ctype = "JPEG", "image/jpeg"
-    else:
-        fmt, ctype = _choose_fmt(request.META.get("HTTP_ACCEPT"))
-    buf = io.BytesIO()
-    if fmt == "WEBP":
-        img.save(buf, "WEBP", quality=q, method=6)
-    else:
-        img.save(buf, "JPEG", quality=q, optimize=True, progressive=True)
-    buf.seek(0)
-
-    stat = os.stat(sd.file.path)
-    etag = hashlib.sha1(f"{stat.st_mtime_ns}:{stat.st_size}:{w}:{fmt}:{q}".encode()).hexdigest()
-    if request.META.get("HTTP_IF_NONE_MATCH") == etag:
-        return HttpResponse(status=304)
-    resp = HttpResponse(buf.getvalue(), content_type=ctype)
-    resp["Cache-Control"] = "public, max-age=31536000, immutable"
-    resp["ETag"] = etag
-    resp["Vary"] = "Accept"
-    return resp
-
-def _ensure_preview_for_supporting_doc(instance: SupportingDocument):
-    """Create a resized WebP/JPEG preview if missing (idempotent)."""
-    try:
-        # Skip if preview already exists
-        if instance.preview_image and getattr(instance.preview_image, 'name', '').strip():
-            return
-        src = instance.file.path
-        base, ext = os.path.splitext(os.path.basename(src))
-        if ext.lower() == '.pdf':
-            pdf = fitz.open(src)
-            pg = pdf[0]
-            pix = pg.get_pixmap(matrix=fitz.Matrix(1.5, 1.5), alpha=False)
-            tmp = tempfile.mkstemp(suffix='.png')[1]
-            with open(tmp, 'wb') as f:
-                f.write(pix.tobytes('png'))
-            fileobj, ext_prev = _encode_preview(tmp, f"{base}_PREVIEW")
-            instance.preview_image.save(f"{base}_PREVIEW{ext_prev}", fileobj, save=False)
-            os.remove(tmp)
-        else:
-            fileobj, ext_prev = _encode_preview(src, f"{base}_PREVIEW")
-            instance.preview_image.save(f"{base}_PREVIEW{ext_prev}", fileobj, save=False)
-        instance.save(update_fields=['preview_image'])
-    except Exception as e:
-        logger.warning("preview generation failed for %s: %s", getattr(instance, 'id', '?'), e)
-
-
-@api_view(["GET"])
-@permission_classes([IsAuthenticated])
-def kebun_outline_view(request, estate_code: str):
-    """
-    Return GeoJSON outline for a given estate.
-    """
-    try:
-        estate_dir = _safe_estate_dir(estate_code)
-        geo_path = _first_existing(
-            estate_dir / "outline.geojson",
-            estate_dir / f"{estate_code}_outline.geojson",
-        )
-    except FileNotFoundError:
-        return Response({"detail": "Outline file not found"}, status=404)
-
-    try:
-        with geo_path.open("r", encoding="utf-8") as f:
-            data = json.load(f)
-    except json.JSONDecodeError:
-        return Response({"detail": "Invalid GeoJSON file"}, status=500)
-
-    # Optional: auto-fix swapped lon/lat pairs when clearly wrong
-    def _is_num(x):
-        return isinstance(x, (int, float))
-
-    def _fix_pair(p):
-        if not (isinstance(p, list) and len(p) >= 2 and _is_num(p[0]) and _is_num(p[1])):
-            return p
-        lng, lat = p[0], p[1]
-        # if lat is out of latitude range, but lng looks like latitude, and lat within plausible lon range → swap
-        if abs(lat) > 90 and abs(lng) <= 90 and abs(lat) <= 180:
-            return [lat, lng] + p[2:]
-        return p
-
-    def _walk(node):
-        if isinstance(node, list):
-            if len(node) >= 2 and _is_num(node[0]) and _is_num(node[1]):
-                return _fix_pair(node)
-            return [_walk(x) for x in node]
-        return node
-
-    try:
-        if isinstance(data, dict):
-            t = data.get("type")
-            if t == "FeatureCollection":
-                for ft in data.get("features", []) or []:
-                    geom = ft.get("geometry") or {}
-                    if geom and "coordinates" in geom:
-                        geom["coordinates"] = _walk(geom.get("coordinates"))
-            elif t == "Feature":
-                geom = data.get("geometry") or {}
-                if geom and "coordinates" in geom:
-                    geom["coordinates"] = _walk(geom.get("coordinates"))
-            elif "coordinates" in data:
-                data["coordinates"] = _walk(data.get("coordinates"))
-    except Exception:
-        # Non-fatal: if any error occurs, return original data
-        pass
-
-    return Response(data)
-
-
-@api_view(["GET"])
-@permission_classes([IsAuthenticated])
-def kebun_blocks_view(request, estate_code: str):
-    """
-    Return GeoJSON block polygons for a given estate.
-    """
-    try:
-        estate_dir = _safe_estate_dir(estate_code)
-        geo_path = _first_existing(
-            estate_dir / "blocks.geojson",
-            estate_dir / f"{estate_code}_blocks.geojson",
-        )
-    except FileNotFoundError:
-        return Response({"detail": "Blocks file not found"}, status=404)
-
-    try:
-        with geo_path.open("r", encoding="utf-8") as f:
-            data = json.load(f)
-    except json.JSONDecodeError:
-        return Response({"detail": "Invalid GeoJSON file"}, status=500)
-
-    return Response(data)
-
-def _is_rekap_header(hdr) -> bool:
-    expected = ["no", "keterangan", "dibayar ke", "bank", "pengiriman"]
-    norm = [str(x).strip().lower() for x in (hdr or [])]
-    return len(norm) >= 5 and norm[:5] == expected
-
-# Detect and strip GRAND TOTAL entries
-
-def _has_grand_total(sections):
-    return any(isinstance(s, dict) and "grand_total" in s for s in (sections or []))
-
-
-def _strip_grand_totals(sections):
-    return [s for s in (sections or []) if not (isinstance(s, dict) and "grand_total" in s)]
-
-
-def _looks_like_continuation(first_parsed, second_parsed) -> bool:
-    if not second_parsed:
-        return False
-    for sec in (second_parsed or []):
-        tbl = sec.get("table") or []
-        if tbl and _is_rekap_header(tbl[0]) and len(tbl) >= 2:
-            # require at least one non-empty data row
-            if any(any(str(c).strip() for c in r) for r in tbl[1:]):
-                return True
-    return False
-
-
-def _parse_ymd(s: str | None) -> date | None:
-    """Parse 'YYYY-MM-DD' into a date or return None."""
+def _otp_key(challenge_id: str) -> str:
+    return f"otp:{challenge_id}"
+
+def _mask_msisdn(msisdn: str | None) -> str:
+    s = (msisdn or "").strip()
     if not s:
-        return None
-    try:
-        return datetime.strptime(s, "%Y-%m-%d").date()
-    except (ValueError, TypeError):
-        return None
+        return "—"
+    if len(s) <= 7:
+        return s[:2] + "***" + s[-2:]
+    prefix = s[:4]
+    tail = s[-3:]
+    return prefix + ("*" * max(3, len(s) - 7)) + tail
 
+def _generate_otp_code() -> str:
+    return f"{secrets.randbelow(1_000_000):06d}"
 
-def _idr_to_int(text) -> int:
-    """'5.200.000' → 5200000. Graceful on empty/None."""
-    if text is None:
-        return 0
-    digits = re.sub(r"[^\d]", "", str(text))
-    return int(digits or "0")
-
-def _format_date_long_id(d) -> str:
-    """Return date as 'DD Month YYYY' (e.g., '13 December 2025'). Accepts date/datetime/ISO/None."""
-    if not d:
-        return ""
-    if isinstance(d, str):
-        # Try common formats
-        for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%d.%m.%Y"):
-            try:
-                d = datetime.strptime(d, fmt).date()
-                break
-            except Exception:
-                continue
-        else:
-            return str(d)
-    if hasattr(d, "date") and not isinstance(d, date):
-        try:
-            d = d.date()
-        except Exception:
-            pass
-    try:
-        return d.strftime("%d %B %Y")
-    except Exception:
-        return str(d)
-
-def _parse_tanggal_masuk_from_keterangan(text: str) -> date | None:
+def _send_whatsapp_otp(to_number: str, code: str, purpose: str) -> None:
     """
-    Extract 'MASUK dd/mm/yy' (or dd-mm-yy / dd.mm.yy) from keterangan.
-    Example: '... MASUK 11/10/25 LOKASI ...' → date(2025, 10, 11)
+    - If DEBUG or OTP_DEV_MODE=1: log OTP (dev only)
+    - Otherwise: fail closed until a real provider is wired
     """
-    if not text:
-        return None
-    m = re.search(
-        r"masuk\s*(?:tgl\s*)?:?\s*(\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4})",
-        str(text),
-        flags=re.IGNORECASE,
+    if getattr(settings, "DEBUG", False) or OTP_DEV_MODE:
+        logger.warning("[DEV OTP] purpose=%s to=%s code=%s", purpose, to_number, code)
+        return
+    raise RuntimeError("WhatsApp OTP provider not configured")
+
+def _create_otp_challenge(*, user_id: int, purpose: str, to_number: str) -> dict:
+    challenge_id = uuid.uuid4().hex
+    code = _generate_otp_code()
+    now = int(time.time())
+    exp = now + int(timedelta(seconds=OTP_TTL_SECONDS).total_seconds())
+    payload = {
+        "user_id": user_id,
+        "purpose": purpose,
+        "to": to_number,
+        "code_hash": make_password(code),
+        "attempts": 0,
+        "max_attempts": OTP_MAX_ATTEMPTS,
+        "created": now,
+        "exp": exp,
+    }
+    cache.set(_otp_key(challenge_id), payload, timeout=OTP_TTL_SECONDS)
+    _send_whatsapp_otp(to_number, code, purpose)
+    return {
+        "challenge_id": challenge_id,
+        "destination": _mask_msisdn(to_number),
+        "expires_in": OTP_TTL_SECONDS,
+    }
+
+def _verify_otp_challenge(*, challenge_id: str, code: str, purpose: str) -> tuple[dict, str | None]:
+    key = _otp_key((challenge_id or "").strip())
+    payload = cache.get(key)
+    if not payload:
+        return {}, "OTP tidak ditemukan / sudah kedaluwarsa."
+
+    now = int(time.time())
+    if payload.get("purpose") != purpose:
+        return {}, "OTP tidak valid untuk aksi ini."
+    if now > int(payload.get("exp") or 0):
+        cache.delete(key)
+        return {}, "OTP sudah kedaluwarsa."
+
+    attempts = int(payload.get("attempts") or 0)
+    max_attempts = int(payload.get("max_attempts") or OTP_MAX_ATTEMPTS)
+    if attempts >= max_attempts:
+        cache.delete(key)
+        return {}, "Terlalu banyak percobaan OTP. Silakan minta OTP baru."
+
+    ok = check_password(str(code or "").strip(), payload.get("code_hash") or "")
+    if not ok:
+        payload["attempts"] = attempts + 1
+        ttl = max(1, int(payload.get("exp") or now) - now)
+        cache.set(key, payload, timeout=ttl)
+        return {}, "OTP salah."
+
+    cache.delete(key)  # one-time use
+    return payload, None
+
+_User = get_user_model()
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def otp_login_start(request):
+    username = (request.data.get("username") or "").strip()
+    password = request.data.get("password") or ""
+
+    user = authenticate(username=username, password=password)
+    if not user:
+        return Response({"error": "Invalid credentials"}, status=drf_status.HTTP_401_UNAUTHORIZED)
+
+    settings_obj, _ = UserSettings.objects.get_or_create(user=user)
+    to_number = (settings_obj.whatsapp_number or "").strip()
+    if not to_number:
+        return Response(
+            {"error": "Nomor WhatsApp belum diatur untuk akun ini."},
+            status=drf_status.HTTP_400_BAD_REQUEST,
+        )
+
+    try:
+        data = _create_otp_challenge(user_id=user.id, purpose="login", to_number=to_number)
+    except RuntimeError as e:
+        return Response({"error": str(e)}, status=drf_status.HTTP_503_SERVICE_UNAVAILABLE)
+
+    return Response(data, status=drf_status.HTTP_200_OK)
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def otp_login_verify(request):
+    challenge_id = (request.data.get("challenge_id") or "").strip()
+    code = (request.data.get("otp") or "").strip()
+
+    payload, err = _verify_otp_challenge(challenge_id=challenge_id, code=code, purpose="login")
+    if err:
+        return Response({"error": err}, status=drf_status.HTTP_400_BAD_REQUEST)
+
+    user_id = payload.get("user_id")
+    try:
+        user = _User.objects.get(id=user_id)
+    except _User.DoesNotExist:
+        return Response({"error": "User tidak ditemukan."}, status=drf_status.HTTP_400_BAD_REQUEST)
+
+    refresh = RefreshToken.for_user(user)
+    access = refresh.access_token
+
+    groups = list(user.groups.values_list("name", flat=True))
+    if "owner" in groups:
+        role = "owner"
+    elif "boss" in groups:
+        role = "higher-up"
+    elif "admin" in groups:
+        role = "employee"
+    else:
+        role = "employee"
+
+    return Response(
+        {
+            "access": str(access),
+            "refresh": str(refresh),
+            "username": user.username,
+            "groups": groups,
+            "role": role,
+        },
+        status=drf_status.HTTP_200_OK,
     )
-    if not m:
-        return None
-    raw = m.group(1).replace(".", "/").replace("-", "/")
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def otp_password_change_start(request):
+    user = request.user
+    settings_obj, _ = UserSettings.objects.get_or_create(user=user)
+    to_number = (settings_obj.whatsapp_number or "").strip()
+    if not to_number:
+        return Response(
+            {"error": "Nomor WhatsApp belum diatur untuk akun ini."},
+            status=drf_status.HTTP_400_BAD_REQUEST,
+        )
+
     try:
-        d_s, m_s, y_s = raw.split("/")
-        day = int(d_s)
-        month = int(m_s)
-        year = int(y_s)
-        if year < 100:
-            year = 2000 + year if year < 70 else 1900 + year
-        return date(year, month, day)
-    except Exception:
-        return None
+        data = _create_otp_challenge(user_id=user.id, purpose="password_change", to_number=to_number)
+    except RuntimeError as e:
+        return Response({"error": str(e)}, status=drf_status.HTTP_503_SERVICE_UNAVAILABLE)
 
+    return Response(data, status=drf_status.HTTP_200_OK)
 
-def _parse_liter_from_keterangan(text: str) -> int | None:
-    """
-    Extract jumlah liter from patterns like '(10.000 LTR)' / '(10.000 liter)'.
-    Returns integer liters (e.g. 10000) or None.
-    """
-    if not text:
-        return None
-    m = re.search(
-        r"\(([^)]*[\d\.,]+)\s*(?:ltr|liter|lt)\)",
-        str(text),
-        flags=re.IGNORECASE,
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def otp_password_change_confirm(request):
+    user = request.user
+    challenge_id = (request.data.get("challenge_id") or "").strip()
+    code = (request.data.get("otp") or "").strip()
+    new_password = request.data.get("new_password") or ""
+
+    if not new_password:
+        return Response(
+            {"error": "Password baru wajib diisi."},
+            status=drf_status.HTTP_400_BAD_REQUEST,
+        )
+
+    payload, err = _verify_otp_challenge(
+        challenge_id=challenge_id, code=code, purpose="password_change"
     )
-    if not m:
-        return None
-    digits = re.sub(r"[^\d]", "", m.group(1))
-    if not digits:
-        return None
+    if err:
+        return Response({"error": err}, status=drf_status.HTTP_400_BAD_REQUEST)
+
+    if int(payload.get("user_id") or 0) != int(user.id):
+        return Response(
+            {"error": "OTP ini bukan untuk user saat ini."},
+            status=drf_status.HTTP_403_FORBIDDEN,
+        )
+
     try:
-        return int(digits)
-    except Exception:
-        return None
+        validate_password(new_password, user=user)
+    except ValidationError as ve:
+        msgs = [str(m) for m in (getattr(ve, "messages", []) or [])]
+        return Response(
+            {"error": "Password baru tidak valid.", "details": msgs},
+            status=drf_status.HTTP_400_BAD_REQUEST,
+        )
 
-
-def _shorten_keterangan_bbm(text: str) -> str:
-    """
-    Simplify BBM keterangan.
-    Example:
-      'PEMBAYARAN SOLAR PO - 026 (10.000 LTR) MASUK 11/10/25 LOKASI PT BPSJ'
-      → 'PEMBAYARAN SOLAR PO-026'
-    """
-    if text is None:
-        return ""
-    raw = str(text).strip()
-    if not raw:
-        return ""
-
-    upper = raw.upper()
-    cut_pos = len(raw)
-    for token in [" MASUK", " LOKASI", "("]:
-        idx = upper.find(token)
-        if idx != -1:
-            cut_pos = min(cut_pos, idx)
-
-    raw = raw[:cut_pos].strip()
-    # Normalize 'PO - 026' → 'PO-026'
-    raw = re.sub(r"\bPO\s*-\s*", "PO-", raw, flags=re.IGNORECASE)
-    return raw
-
-
-def _save_single_page_pdf(pdf_doc, page_index: int) -> str:
-    single = fitz.open()  # create empty PDF doc
-    single.insert_pdf(pdf_doc, from_page=page_index, to_page=page_index)
-    fd, out = tempfile.mkstemp(suffix=".pdf"); os.close(fd)
-    single.save(out)  # no compression to preserve quality
-    single.close()
-    return out
+    user.set_password(new_password)
+    user.save(update_fields=["password"])
+    return Response({"ok": True}, status=drf_status.HTTP_200_OK)
 
 # --- Marker detection helpers (fast text + OCR fallback) ---
 def _crop_top_right_b64(image_path: str, w_frac: float = 0.35, h_frac: float = 0.25) -> str:
@@ -1801,3 +1370,281 @@ def rekap_view(request, company_code: str, rekap_key: str):
         "meta": meta_rows,
     }
     return Response(result)
+
+# ---------------------------------------------------------------------------
+# Missing exports required by backend/backend/urls.py
+# ---------------------------------------------------------------------------
+
+# NOTE: Imported here (end-of-file) so we don't need to touch the large import
+# block above. Python resolves globals at call time, so this is safe.
+from rest_framework_simplejwt.tokens import RefreshToken
+
+
+class DocumentViewSet(viewsets.ModelViewSet):
+    """CRUD for main documents + a by-code lookup used by DocumentPreviewPage."""
+
+    queryset = Document.objects.all().order_by("-created_at")
+    serializer_class = DocumentSerializer
+    permission_classes = [IsAuthenticated]
+
+    @action(detail=False, methods=["get"], url_path=r"by-code/(?P<code>[^/.]+)")
+    def by_code(self, request, code=None):
+        doc = get_object_or_404(Document, document_code=code)
+        self.check_object_permissions(request, doc)
+        return Response(self.get_serializer(doc).data)
+
+    def partial_update(self, request, *args, **kwargs):
+        instance: Document = self.get_object()
+
+        # Lock edits after paid/archive (but still allow flipping archived=True).
+        if instance.archived or instance.status == "sudah_dibayar":
+            allowed = {"archived"}
+            if any(k not in allowed for k in request.data.keys()):
+                raise PermissionDenied(
+                    "Dokumen sudah diarsipkan/dibayar; tidak dapat diubah lagi."
+                )
+
+        # Special: update PAY_REF cells by REF_CODE (frontend sends item_payment_refs)
+        if "item_payment_refs" in request.data:
+            refs = request.data.get("item_payment_refs")
+            if not isinstance(refs, dict):
+                return Response(
+                    {"error": "item_payment_refs harus berupa object."},
+                    status=drf_status.HTTP_400_BAD_REQUEST,
+                )
+
+            pj = instance.parsed_json or []
+
+            for ref_code, pay_ref in refs.items():
+                ref_code_s = str(ref_code)
+                pay_ref_s = "" if pay_ref is None else str(pay_ref)
+
+                for sec in pj:
+                    tbl = sec.get("table")
+                    if not tbl or len(tbl) < 2:
+                        continue
+                    headers = tbl[0] or []
+                    if "PAY_REF" not in headers:
+                        headers.append("PAY_REF")
+                    pay_idx = headers.index("PAY_REF")
+
+                    # Pad all rows so r[pay_idx] exists.
+                    for r in tbl[1:]:
+                        while len(r) <= pay_idx:
+                            r.append("")
+
+                    # REF_CODE is always the last cell.
+                    for r in tbl[1:]:
+                        if r and str(r[-1]) == ref_code_s:
+                            r[pay_idx] = pay_ref_s
+
+            instance.parsed_json = pj
+            instance.save(update_fields=["parsed_json", "updated_at"])
+            return Response(self.get_serializer(instance).data)
+
+        return super().partial_update(request, *args, **kwargs)
+
+    def perform_update(self, serializer):
+        before: Document = serializer.instance
+        prev_status = before.status
+        prev_archived = before.archived
+
+        obj: Document = serializer.save()
+        now = timezone.now()
+        fields: list[str] = []
+
+        if obj.status != prev_status:
+            if obj.status == "disetujui":
+                obj.approved_at = now
+                fields.append("approved_at")
+            elif obj.status == "rejected":
+                obj.rejected_at = now
+                fields.append("rejected_at")
+            elif obj.status == "belum_disetujui":
+                obj.finished_draft_at = now
+                fields.append("finished_draft_at")
+            elif obj.status == "sudah_dibayar":
+                obj.paid_at = now
+                fields.append("paid_at")
+
+        if obj.archived and not prev_archived and not obj.archived_at:
+            obj.archived_at = now
+            fields.append("archived_at")
+
+        if fields:
+            obj.save(update_fields=fields)
+
+
+class SupportingDocumentViewSet(viewsets.ModelViewSet):
+    queryset = SupportingDocument.objects.all().order_by("supporting_doc_sequence")
+    serializer_class = SupportingDocumentSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        main_document = self.request.query_params.get("main_document")
+        if main_document:
+            qs = qs.filter(main_document_id=main_document)
+        return qs
+
+    def _ensure_editable(self, main_doc: Document):
+        if main_doc.archived or main_doc.status == "sudah_dibayar":
+            raise PermissionDenied(
+                "Dokumen sudah diarsipkan/dibayar; dokumen pendukung tidak bisa diubah."
+            )
+
+    def perform_create(self, serializer):
+        main_doc: Document = serializer.validated_data["main_document"]
+        self._ensure_editable(main_doc)
+        ref = serializer.validated_data.get("item_ref_code")
+
+        last = (
+            SupportingDocument.objects.filter(main_document=main_doc, item_ref_code=ref)
+            .order_by("-supporting_doc_sequence")
+            .values_list("supporting_doc_sequence", flat=True)
+            .first()
+            or 0
+        )
+        serializer.save(supporting_doc_sequence=int(last) + 1)
+
+    def perform_update(self, serializer):
+        instance: SupportingDocument = serializer.instance
+        self._ensure_editable(instance.main_document)
+        if instance.status == "disetujui":
+            raise PermissionDenied("Dokumen pendukung sudah disetujui; tidak bisa diubah.")
+
+        prev_status = instance.status
+        obj: SupportingDocument = serializer.save()
+        if prev_status != obj.status and obj.status == "disetujui":
+            obj.approved_at = timezone.now()
+            obj.save(update_fields=["approved_at"])
+
+    def destroy(self, request, *args, **kwargs):
+        instance: SupportingDocument = self.get_object()
+        self._ensure_editable(instance.main_document)
+        if instance.status == "disetujui":
+            raise PermissionDenied("Dokumen pendukung sudah disetujui; tidak bisa dihapus.")
+        return super().destroy(request, *args, **kwargs)
+
+
+def _clamp_int(v, default: int, lo: int, hi: int) -> int:
+    try:
+        i = int(v)
+    except Exception:
+        return default
+    return max(lo, min(hi, i))
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def sdoc_preview(request, pk: int):
+    """Render a lightweight preview image for a supporting document.
+
+    Used by the frontend in <img src="..."> tags, so this endpoint must not rely
+    on Authorization headers.
+
+    Query params:
+      - w: target width (px), default 640
+      - fmt: webp|jpeg (optional)
+    """
+
+    sdoc = get_object_or_404(SupportingDocument, pk=pk)
+    path = getattr(sdoc.file, "path", None)
+    if not path or not os.path.exists(path):
+        return HttpResponse(status=404)
+
+    w = _clamp_int(request.GET.get("w"), default=640, lo=120, hi=1600)
+    fmt = (request.GET.get("fmt") or "").strip().lower()
+    if fmt not in {"webp", "jpeg", "jpg"}:
+        accept = (request.headers.get("Accept") or "").lower()
+        fmt = "webp" if "image/webp" in accept else "jpeg"
+    if fmt == "jpg":
+        fmt = "jpeg"
+
+    # Cheap ETag based on file stat + requested transform.
+    st = os.stat(path)
+    etag = hashlib.sha1(f"{st.st_mtime_ns}-{st.st_size}-{w}-{fmt}".encode()).hexdigest()
+    if (request.headers.get("If-None-Match") or "") == etag:
+        resp = HttpResponse(status=304)
+        resp["ETag"] = etag
+        return resp
+
+    ext = os.path.splitext(path)[1].lower()
+    try:
+        if ext == ".pdf":
+            pdf = fitz.open(path)
+            page = pdf.load_page(0)
+            zoom = w / max(1.0, float(page.rect.width))
+            zoom = max(0.2, min(6.0, zoom))
+            pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
+            img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+            pdf.close()
+        else:
+            img = Image.open(path)
+            img = ImageOps.exif_transpose(img)
+            if img.mode not in ("RGB", "L"):
+                img = img.convert("RGB")
+            # Resize only if larger.
+            if img.width > w:
+                h = int(img.height * (w / img.width))
+                img = img.resize((w, max(1, h)), Image.LANCZOS)
+
+        buf = io.BytesIO()
+        if fmt == "webp":
+            try:
+                img.save(buf, format="WEBP", quality=78, method=6)
+                content_type = "image/webp"
+            except Exception:
+                buf = io.BytesIO()
+                img.save(buf, format="JPEG", quality=80, optimize=True)
+                content_type = "image/jpeg"
+        else:
+            img.save(buf, format="JPEG", quality=80, optimize=True)
+            content_type = "image/jpeg"
+
+        data = buf.getvalue()
+        resp = HttpResponse(data, content_type=content_type)
+        resp["ETag"] = etag
+        resp["Cache-Control"] = "public, max-age=86400"
+        return resp
+    except Exception as e:
+        logger.exception("sdoc_preview failed: %s", e)
+        return HttpResponse(status=500)
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def kebun_outline_view(request, estate_code):
+    try:
+        estate_dir = _safe_estate_dir(estate_code)
+        path = _first_existing(
+            estate_dir / "outline.geojson",
+            estate_dir / "outline.json",
+            estate_dir / f"{estate_code}_outline.geojson",
+            estate_dir / f"{estate_code}_outline.json",
+        )
+        with path.open("r", encoding="utf-8") as f:
+            return Response(json.load(f))
+    except FileNotFoundError as e:
+        return Response({"detail": str(e)}, status=404)
+    except Exception as e:
+        return Response({"detail": f"Failed to load outline: {e}"}, status=500)
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def kebun_blocks_view(request, estate_code):
+    try:
+        estate_dir = _safe_estate_dir(estate_code)
+        path = _first_existing(
+            estate_dir / "blocks.geojson",
+            estate_dir / "blocks.json",
+            estate_dir / f"{estate_code}_blocks.geojson",
+            estate_dir / f"{estate_code}_blocks.json",
+        )
+        with path.open("r", encoding="utf-8") as f:
+            return Response(json.load(f))
+    except FileNotFoundError as e:
+        return Response({"detail": str(e)}, status=404)
+    except Exception as e:
+        return Response({"detail": f"Failed to load blocks: {e}"}, status=500)
