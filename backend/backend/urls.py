@@ -20,6 +20,8 @@ from documents.views import (
     otp_login_verify,
     otp_password_change_start,
     otp_password_change_confirm,
+    password_reset_start,
+    password_reset_confirm,
 )
 from django.conf import settings
 from django.conf.urls.static import static
@@ -46,6 +48,8 @@ urlpatterns = [
     path("api/auth/login/verify/", otp_login_verify, name="otp_login_verify"),
     path("api/auth/password/start/", otp_password_change_start, name="otp_password_change_start"),
     path("api/auth/password/confirm/", otp_password_change_confirm, name="otp_password_change_confirm"),
+    path("api/auth/password/reset/start/", password_reset_start, name="password_reset_start"),
+    path("api/auth/password/reset/confirm/", password_reset_confirm, name="password_reset_confirm"),
     path('api/token/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('api/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
     path('api/me/', user_info),  # <-- add user_info endpoint

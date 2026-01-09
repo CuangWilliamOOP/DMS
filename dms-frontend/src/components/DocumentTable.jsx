@@ -919,6 +919,9 @@ function DocumentTable({ documents, refreshDocuments }) {
       const hasTable = Array.isArray(table) && table.length > 0;
       const headerRow = hasTable ? table[0] : [];
       const dataRows = hasTable ? table.slice(1) : [];
+      const visibleHeaderRow = headerRow.filter(
+        (h) => !['REF_CODE', 'PAY_REF'].includes(String(h || '').toUpperCase())
+      );
 
       return (
         <Paper
@@ -958,12 +961,11 @@ function DocumentTable({ documents, refreshDocuments }) {
             <Table size="small" sx={{ tableLayout: 'fixed', width: '100%' }}>
               <TableHead>
                 <TableRow>
-                  {headerRow
-                    .filter((h) => h.toUpperCase() !== 'REF_CODE')
-                    .map((headerCell, i) => {
+                  {visibleHeaderRow.map((headerCell, i) => {
                       let cellWidth = '20%';
-                      if (headerCell.toUpperCase() === 'NO') cellWidth = '5%';
-                      else if (headerCell.toUpperCase() === 'KETERANGAN') cellWidth = '40%';
+                      const hdr = String(headerCell || '').toUpperCase();
+                      if (hdr === 'NO') cellWidth = '5%';
+                      else if (hdr === 'KETERANGAN') cellWidth = '40%';
                       // no need for REF_CODE width
                       return (
                         <TableCell key={`header-${i}`} sx={{ fontWeight: 'bold', width: cellWidth }}>
@@ -992,13 +994,14 @@ function DocumentTable({ documents, refreshDocuments }) {
                         onClick={canRowToggle ? () => handleToggleItemDocs(docId, sectionIndex, rowIndex) : undefined}
                       >
                         {row.map((cell, cellIndex) => {
-                          const isRefCodeColumn = headerRow[cellIndex]?.toUpperCase() === 'REF_CODE';
-                          if (isRefCodeColumn) return null;
+                          const colName = String(headerRow[cellIndex] || '').toUpperCase();
+                          const isHiddenColumn = colName === 'REF_CODE' || colName === 'PAY_REF';
+                          if (isHiddenColumn) return null;
                           return (
                             <EditableTableCell
                               key={cellIndex}
                               value={cell}
-                              canEdit={!isRefCodeColumn && canEditMainDocument(userRole, docStatus)} // REF_CODE non-editable
+                              canEdit={!isHiddenColumn && canEditMainDocument(userRole, docStatus)}
                               onChangeValue={(newVal) =>
                                 handleUpdateCell(sectionIndex, rowIndex, cellIndex, newVal)
                               }
@@ -1064,7 +1067,7 @@ function DocumentTable({ documents, refreshDocuments }) {
                       </TableRow>
 
                       <TableRow>
-                        <TableCell colSpan={headerRow.length + 1} sx={{ p: 0 }}>
+                        <TableCell colSpan={visibleHeaderRow.length + 1} sx={{ p: 0 }}>
                           <Collapse in={expanded} timeout="auto" unmountOnExit>
                             <Box sx={{ m: 2 }}>
                               {/* NEW header — shows current position + total */}
@@ -1112,7 +1115,7 @@ function DocumentTable({ documents, refreshDocuments }) {
                         <AddIcon fontSize="inherit" />
                       </IconButton>
                     </TableCell>
-                    {headerRow.slice(1).map((_, idx) => (
+                    {visibleHeaderRow.slice(1).map((_, idx) => (
                       <TableCell key={`empty-${idx}`} />
                     ))}
                     <TableCell />

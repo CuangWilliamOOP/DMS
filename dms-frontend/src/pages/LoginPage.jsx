@@ -18,6 +18,7 @@ import SmsOutlinedIcon from '@mui/icons-material/SmsOutlined';
 import Visibility from '@mui/icons-material/Visibility';
 import VisibilityOff from '@mui/icons-material/VisibilityOff';
 import API from '../services/api';
+import ForgotPasswordDialog from '../components/ForgotPasswordDialog';
 
 function extractApiError(err, fallback) {
   const msg = err?.response?.data?.error || err?.response?.data?.detail;
@@ -40,6 +41,8 @@ export default function LoginPage() {
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  const [forgotOpen, setForgotOpen] = useState(false);
 
   const isOtpStage = stage === 'otp';
   const otpMinutes = useMemo(() => {
@@ -273,6 +276,20 @@ export default function LoginPage() {
             }}
           />
 
+          {!isOtpStage ? (
+            <Box sx={{ display: 'flex', justifyContent: 'flex-end', mt: -1 }}>
+              <Button
+                variant="text"
+                size="small"
+                onClick={() => setForgotOpen(true)}
+                disabled={loading}
+                sx={{ fontWeight: 600 }}
+              >
+                Lupa password?
+              </Button>
+            </Box>
+          ) : null}
+
           {isOtpStage ? (
             <TextField
               label="Kode OTP"
@@ -348,6 +365,12 @@ export default function LoginPage() {
           © {new Date().getFullYear()} PT. TTU • skip5
         </Box>
       </Paper>
+
+      <ForgotPasswordDialog
+        open={forgotOpen}
+        onClose={() => setForgotOpen(false)}
+        initialValue={(username || '').trim()}
+      />
     </Box>
   );
 }

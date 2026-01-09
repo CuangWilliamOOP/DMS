@@ -32,6 +32,7 @@ from django.http import JsonResponse, HttpResponse
 from django.shortcuts import get_object_or_404
 from django.views.decorators.cache import never_cache
 from django.utils import timezone
+from django.db import transaction
 from rest_framework import status as drf_status, viewsets
 from rest_framework.decorators import api_view, action, permission_classes
 from rest_framework.generics import RetrieveUpdateAPIView
@@ -76,6 +77,12 @@ SMTP_USE_SSL = (os.environ.get("SMTP_USE_SSL") or "0") == "1"
 
 OTP_EMAIL_FROM = (os.environ.get("OTP_EMAIL_FROM") or SMTP_USERNAME).strip()
 OTP_EMAIL_SUBJECT = (os.environ.get("OTP_EMAIL_SUBJECT") or "Kode OTP DMS").strip()
+PASSWORD_RESET_TTL_SECONDS = int(os.environ.get("PASSWORD_RESET_TTL_SECONDS", "300"))  # 5 minutes
+PASSWORD_RESET_MAX_ATTEMPTS = int(os.environ.get("PASSWORD_RESET_MAX_ATTEMPTS", "5"))
+PASSWORD_RESET_EMAIL_SUBJECT = (os.environ.get("PASSWORD_RESET_EMAIL_SUBJECT") or "Reset Password DMS").strip()
+
+# Optional override for the link domain (otherwise derived from request host)
+PUBLIC_BASE_URL = (os.environ.get("PUBLIC_BASE_URL") or "").strip().rstrip("/")
 
 # --- Map data root (filesystem) --------------------------------------------
 # New location: backend/map/<estate_code>/...
@@ -728,6 +735,277 @@ def otp_password_change_confirm(request):
 
     return Response({"ok": True}, status=drf_status.HTTP_200_OK)
 
+
+def _pwdreset_key(reset_id: str) -> str:
+    return f"pwdreset:{reset_id}"
+
+
+def _public_base_url(request) -> str:
+    """
+    Base URL for links in emails.
+    - If PUBLIC_BASE_URL env is set, use it
+    - Else derive from request (honors X-Forwarded-Proto from Nginx)
+    """
+    if PUBLIC_BASE_URL:
+        return PUBLIC_BASE_URL
+    proto = (request.META.get("HTTP_X_FORWARDED_PROTO") or request.scheme or "https").split(",")[0].strip()
+    host = request.get_host()
+    return f"{proto}://{host}"
+
+
+def _send_password_reset_email(to_email: str, reset_link: str) -> None:
+    """
+    Sends a reset-password link to email.
+    Reuses the SMTP configuration already used for OTP email.
+    """
+    if getattr(settings, "DEBUG", False) or OTP_DEV_MODE:
+        logger.warning("[DEV RESET] to=%s link=%s", to_email, reset_link)
+        return
+
+    if not SMTP_USERNAME or not SMTP_PASSWORD:
+        raise RuntimeError("SMTP not configured (missing SMTP_USERNAME/SMTP_PASSWORD).")
+
+    minutes = max(1, math.ceil(int(PASSWORD_RESET_TTL_SECONDS) / 60))
+    subject = PASSWORD_RESET_EMAIL_SUBJECT or "Reset Password"
+
+    text_body = (
+        "Nors Nusa Lab\n\n"
+        "Kami menerima permintaan untuk mereset password akun DMS Anda.\n"
+        f"Link ini berlaku {minutes} menit.\n\n"
+        f"Reset password: {reset_link}\n\n"
+        "Jika Anda tidak meminta reset password, abaikan email ini."
+    )
+
+    html_body = f"""\
+<!doctype html>
+<html>
+  <body style="margin:0;padding:0;background:#f5f7fb;font-family:Arial,Helvetica,sans-serif;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="padding:24px 0;">
+      <tr>
+        <td align="center">
+          <table role="presentation" width="560" cellspacing="0" cellpadding="0"
+                 style="background:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e2e8f0;">
+            <tr>
+              <td style="padding:18px 22px;background:#0f172a;color:#ffffff;">
+                <div style="font-size:16px;font-weight:700;letter-spacing:0.3px;">Nors Nusa Lab</div>
+                <div style="font-size:12px;opacity:0.9;">Document Management System</div>
+              </td>
+            </tr>
+
+            <tr>
+              <td style="padding:22px;color:#0f172a;">
+                <div style="font-size:14px;margin-bottom:10px;">
+                  Kami menerima permintaan untuk <b>reset password</b> akun DMS Anda.
+                </div>
+
+                <div style="font-size:13px;color:#475569;margin-bottom:14px;">
+                  Link ini berlaku <b>{minutes} menit</b>.
+                </div>
+
+                <div style="text-align:center;margin:18px 0;">
+                  <a href="{reset_link}"
+                     style="display:inline-block;padding:12px 18px;border-radius:10px;
+                            background:#2563eb;color:#ffffff;text-decoration:none;
+                            font-weight:700;font-size:14px;">
+                    Reset Password
+                  </a>
+                </div>
+
+                <div style="font-size:12px;color:#64748b;line-height:1.5;">
+                  Jika tombol tidak bekerja, salin dan buka link berikut:
+                  <div style="word-break:break-all;margin-top:8px;color:#0f172a;">{reset_link}</div>
+                </div>
+
+                <hr style="border:none;border-top:1px solid #e2e8f0;margin:18px 0;" />
+
+                <div style="font-size:12px;color:#64748b;line-height:1.5;">
+                  Jika Anda tidak meminta reset password, abaikan email ini.
+                </div>
+              </td>
+            </tr>
+
+            <tr>
+              <td style="padding:14px 22px;background:#f8fafc;font-size:11px;color:#94a3b8;">
+                © {datetime.now().year} Nors Nusa Lab
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>
+"""
+
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    # same "From" behavior as OTP emails (set OTP_EMAIL_FROM to "Nors Nusa Lab <...>")
+    msg["From"] = OTP_EMAIL_FROM or SMTP_USERNAME
+    msg["To"] = to_email
+    msg.set_content(text_body)
+    msg.add_alternative(html_body, subtype="html")
+
+    if SMTP_USE_SSL or SMTP_PORT == 465:
+        smtp = smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=20)
+    else:
+        smtp = smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=20)
+
+    with smtp:
+        smtp.ehlo()
+        if SMTP_USE_TLS and not (SMTP_USE_SSL or SMTP_PORT == 465):
+            smtp.starttls()
+            smtp.ehlo()
+        smtp.login(SMTP_USERNAME, SMTP_PASSWORD)
+        smtp.send_message(msg)
+
+    logger.info("Password reset email sent to=%s", _mask_email(to_email))
+
+
+def _create_password_reset(*, user_id: int) -> tuple[str, str]:
+    reset_id = uuid.uuid4().hex
+    token = secrets.token_hex(32)
+
+    now = int(time.time())
+    exp = now + int(PASSWORD_RESET_TTL_SECONDS)
+
+    payload = {
+        "user_id": int(user_id),
+        "token_hash": make_password(token),
+        "attempts": 0,
+        "max_attempts": PASSWORD_RESET_MAX_ATTEMPTS,
+        "created": now,
+        "exp": exp,
+    }
+
+    key = _pwdreset_key(reset_id)
+    cache.set(key, payload, timeout=PASSWORD_RESET_TTL_SECONDS)
+    return reset_id, token
+
+
+def _verify_password_reset(reset_id: str, token: str) -> tuple[dict, str | None]:
+    key = _pwdreset_key((reset_id or "").strip())
+    payload = cache.get(key)
+    if not payload:
+        return {}, "Link reset tidak ditemukan / sudah kedaluwarsa."
+
+    now = int(time.time())
+    if now > int(payload.get("exp") or 0):
+        cache.delete(key)
+        return {}, "Link reset sudah kedaluwarsa. Silakan minta link baru."
+
+    attempts = int(payload.get("attempts") or 0)
+    max_attempts = int(payload.get("max_attempts") or PASSWORD_RESET_MAX_ATTEMPTS)
+    if attempts >= max_attempts:
+        cache.delete(key)
+        return {}, "Terlalu banyak percobaan. Silakan minta link baru."
+
+    ok = check_password(token, payload.get("token_hash") or "")
+    if not ok:
+        payload["attempts"] = attempts + 1
+        ttl = max(1, int(payload.get("exp") or now) - now)
+        cache.set(key, payload, timeout=ttl)
+        return {}, "Link reset tidak valid."
+    return payload, None
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def password_reset_start(request):
+    """
+    Body: { identifier: "<username or email>" }
+    Always returns ok:true to avoid account enumeration.
+    """
+    identifier = (
+        request.data.get("identifier")
+        or request.data.get("username")
+        or request.data.get("email")
+        or ""
+    ).strip()
+
+    if not identifier:
+        return Response({"error": "Username atau email wajib diisi."}, status=drf_status.HTTP_400_BAD_REQUEST)
+
+    # If not dev mode and SMTP missing -> fail early
+    if not (getattr(settings, "DEBUG", False) or OTP_DEV_MODE):
+        if not SMTP_USERNAME or not SMTP_PASSWORD:
+            return Response(
+                {"error": "SMTP belum dikonfigurasi. Hubungi admin."},
+                status=drf_status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+    user = None
+    try:
+        if "@" in identifier:
+            user = _User.objects.filter(email__iexact=identifier).order_by("id").first()
+        else:
+            user = _User.objects.filter(username__iexact=identifier).order_by("id").first()
+    except Exception:
+        user = None
+
+    # Only send if user exists AND has email
+    if user:
+        to_email = (getattr(user, "email", "") or "").strip()
+        if to_email:
+            reset_id, token = _create_password_reset(user_id=user.id)
+            base = _public_base_url(request)
+            reset_link = f"{base}/reset-password?rid={reset_id}&token={token}"
+
+            try:
+                _send_password_reset_email(to_email, reset_link)
+            except Exception as e:
+                logger.exception("Password reset email send failed user=%s: %s", user.id, e)
+                return Response(
+                    {"error": "Gagal mengirim email reset. Coba lagi atau hubungi admin."},
+                    status=drf_status.HTTP_503_SERVICE_UNAVAILABLE,
+                )
+
+    return Response(
+        {"ok": True, "message": "Jika akun terdaftar, link reset sudah dikirim ke email Anda."},
+        status=drf_status.HTTP_200_OK,
+    )
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def password_reset_confirm(request):
+    """
+    Body: { reset_id, token, new_password }
+    """
+    reset_id = (request.data.get("reset_id") or request.data.get("rid") or "").strip()
+    token = (request.data.get("token") or "").strip()
+    new_password = request.data.get("new_password") or ""
+
+    if not reset_id or not token:
+        return Response({"error": "Link reset tidak valid."}, status=drf_status.HTTP_400_BAD_REQUEST)
+    if not new_password:
+        return Response({"error": "Password baru wajib diisi."}, status=drf_status.HTTP_400_BAD_REQUEST)
+
+    payload, err = _verify_password_reset(reset_id, token)
+    if err:
+        return Response({"error": err}, status=drf_status.HTTP_400_BAD_REQUEST)
+
+    user_id = int(payload.get("user_id") or 0)
+    try:
+        user = _User.objects.get(id=user_id)
+    except _User.DoesNotExist:
+        return Response({"error": "User tidak ditemukan."}, status=drf_status.HTTP_400_BAD_REQUEST)
+
+    try:
+        validate_password(new_password, user=user)
+    except ValidationError as e:
+        return Response(
+            {"error": "Password tidak valid.", "details": list(e.messages)},
+            status=drf_status.HTTP_400_BAD_REQUEST,
+        )
+
+    user.set_password(new_password)
+    user.save(update_fields=["password"])
+
+    # Invalidate link after successful reset
+    cache.delete(_pwdreset_key(reset_id))
+
+    return Response({"ok": True}, status=drf_status.HTTP_200_OK)
+
 # --- Marker detection helpers (fast text + OCR fallback) ---
 def _crop_top_right_b64(image_path: str, w_frac: float = 0.35, h_frac: float = 0.25) -> str:
     """Return base64 of a top-right crop of the image."""
@@ -835,6 +1113,293 @@ def _row_ctx(parsed):
                 "ref_code": row[ref_i],
             })
     return ctx
+
+
+# ---------------------------------------------------------------------------
+# Missing helpers (were referenced but not defined; caused 500 NameError)
+# ---------------------------------------------------------------------------
+
+def _parse_ymd(s: str | None):
+    """Parse YYYY-MM-DD into datetime.date; return None on empty/invalid."""
+    if not s:
+        return None
+    try:
+        return datetime.strptime(s.strip(), "%Y-%m-%d").date()
+    except Exception:
+        return None
+
+
+_ID_MONTHS = {
+    1: "Januari",
+    2: "Februari",
+    3: "Maret",
+    4: "April",
+    5: "Mei",
+    6: "Juni",
+    7: "Juli",
+    8: "Agustus",
+    9: "September",
+    10: "Oktober",
+    11: "November",
+    12: "Desember",
+}
+
+
+def _format_date_long_id(d):
+    """Format date/datetime as '7 Januari 2026'. Returns '-' for None."""
+    if not d:
+        return "-"
+    if isinstance(d, datetime):
+        d = d.date()
+    if isinstance(d, str):
+        # best-effort: accept ISO strings
+        try:
+            d = datetime.fromisoformat(d).date()
+        except Exception:
+            return d
+    try:
+        return f"{d.day} {_ID_MONTHS.get(d.month, str(d.month))} {d.year}"
+    except Exception:
+        return str(d)
+
+
+def _idr_to_int(value) -> int:
+    """
+    Parse Indonesian currency-ish strings to int.
+    Examples: 'Rp 1.234.567' -> 1234567, '1.234,00' -> 1234.
+    """
+    if value is None:
+        return 0
+    s = str(value).strip()
+    if not s:
+        return 0
+
+    neg = False
+    if "(" in s and ")" in s:
+        neg = True
+    if s.startswith("-"):
+        neg = True
+
+    s = s.lower().replace("rp", "").replace("idr", "").strip()
+
+    # Drop decimal part if it looks like ",00" / ",0" / ",12"
+    if "," in s:
+        left, right = s.rsplit(",", 1)
+        if re.fullmatch(r"\s*\d{1,2}\s*", right or ""):
+            s = left
+
+    digits = re.findall(r"\d+", s)
+    if not digits:
+        return 0
+
+    n = int("".join(digits))
+    return -n if neg else n
+
+
+_MONTH_NAME_MAP = {
+    "jan": 1,
+    "januari": 1,
+    "feb": 2,
+    "februari": 2,
+    "mar": 3,
+    "maret": 3,
+    "apr": 4,
+    "april": 4,
+    "mei": 5,
+    "jun": 6,
+    "juni": 6,
+    "jul": 7,
+    "juli": 7,
+    "agu": 8,
+    "agustus": 8,
+    "sep": 9,
+    "september": 9,
+    "okt": 10,
+    "oktober": 10,
+    "nov": 11,
+    "november": 11,
+    "des": 12,
+    "desember": 12,
+}
+
+
+def _parse_tanggal_masuk_from_keterangan(text: str | None):
+    """Best-effort extract a date from a BBM 'keterangan' string."""
+    s = (text or "").strip()
+    if not s:
+        return None
+
+    # dd/mm/yyyy or dd-mm-yy etc
+    for m in re.finditer(r"(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})", s):
+        dd, mm, yy = m.group(1), m.group(2), m.group(3)
+        try:
+            d = int(dd)
+            mo = int(mm)
+            y = int(yy)
+            if y < 100:
+                y += 2000
+            return date(y, mo, d)
+        except Exception:
+            continue
+
+    # dd <monthname> yyyy (Indonesian)
+    m2 = re.search(r"(\d{1,2})\s*([A-Za-z]{3,10})\s*(\d{2,4})", s)
+    if m2:
+        try:
+            d = int(m2.group(1))
+            mon_raw = m2.group(2).lower()
+            y = int(m2.group(3))
+            if y < 100:
+                y += 2000
+            mo = _MONTH_NAME_MAP.get(mon_raw)
+            if mo:
+                return date(y, mo, d)
+        except Exception:
+            pass
+
+    return None
+
+
+def _parse_liter_from_keterangan(text: str | None) -> int:
+    """Best-effort extract liters from keterangan, returns int (0 if not found)."""
+    s = (text or "").lower()
+    if not s:
+        return 0
+
+    # e.g. "200 l", "200 liter", "200ltr", "1.000 L"
+    m = re.search(r"(\d+(?:[.,]\d+)?)\s*(l|liter|ltr)\b", s)
+    if not m:
+        return 0
+
+    raw = m.group(1)
+
+    # Normalize Indonesian numeric formatting
+    # If "1.000" (thousands) and no comma, treat dots as thousands separators.
+    if raw.count(".") >= 1 and raw.count(",") == 0:
+        parts = raw.split(".")
+        if all(len(p) == 3 for p in parts[1:]):
+            raw = "".join(parts)
+
+    # If "1.234,5" -> "1234.5"
+    if raw.count(",") == 1 and raw.count(".") >= 1:
+        raw = raw.replace(".", "").replace(",", ".")
+    elif raw.count(",") == 1 and raw.count(".") == 0:
+        raw = raw.replace(",", ".")
+
+    try:
+        return int(round(float(raw)))
+    except Exception:
+        return 0
+
+
+def _shorten_keterangan_bbm(text: str | None, max_len: int = 90) -> str:
+    """Compact whitespace + shorten for recap display."""
+    s = re.sub(r"\s+", " ", (text or "")).strip()
+    if not s:
+        return ""
+    # Light normalization (don't over-destroy info)
+    s = re.sub(r"(?i)\b(po\s*)?pembayaran\s+solar\b", "Pembayaran Solar", s)
+    if len(s) > max_len:
+        return s[: max_len - 3].rstrip() + "..."
+    return s
+
+
+def _has_grand_total(parsed) -> bool:
+    """True if any dict item contains 'grand_total'."""
+    for x in parsed or []:
+        if isinstance(x, dict) and "grand_total" in x:
+            return True
+    return False
+
+
+def _strip_grand_totals(parsed):
+    """Remove any {'grand_total': ...} objects from the list."""
+    return [x for x in (parsed or []) if not (isinstance(x, dict) and "grand_total" in x)]
+
+
+_EXPECTED_HDR = {"no", "keterangan", "dibayar ke", "bank", "pengiriman"}
+
+
+def _looks_like_continuation(prev_sections, cur_sections) -> bool:
+    """
+    Heuristic: treat as recap-continuation if GPT returned at least one table-like
+    section with expected headers (or row numbering).
+    """
+    if not cur_sections:
+        return False
+    if _has_grand_total(cur_sections):
+        return True
+
+    for sec in cur_sections:
+        if not isinstance(sec, dict):
+            continue
+        tbl = sec.get("table")
+        if not isinstance(tbl, list) or not tbl:
+            continue
+        hdr = tbl[0] if isinstance(tbl[0], list) else []
+        hdr_lower = [str(h or "").strip().lower() for h in hdr]
+        hits = sum(1 for h in hdr_lower if h in _EXPECTED_HDR)
+        if "keterangan" in hdr_lower and hits >= 3:
+            return True
+
+        # fallback: if it has rows and first cell is numeric-ish
+        if len(tbl) >= 2 and isinstance(tbl[1], list) and tbl[1]:
+            if str(tbl[1][0]).strip().isdigit():
+                return True
+
+    return False
+
+
+def _save_page_image(pdf: fitz.Document, page_index: int, dpi: int = 144) -> str:
+    """Render a PDF page to a temporary PNG file; returns file path."""
+    page = pdf.load_page(page_index)
+    scale = float(dpi) / 72.0
+    mat = fitz.Matrix(scale, scale)
+    pix = page.get_pixmap(matrix=mat, alpha=False)
+
+    fd, out_path = tempfile.mkstemp(suffix=".png")
+    os.close(fd)
+    pix.save(out_path)
+    return out_path
+
+
+def _save_single_page_pdf(pdf: fitz.Document, page_index: int) -> str:
+    """Extract one page into a temporary single-page PDF; returns file path."""
+    out = fitz.open()
+    out.insert_pdf(pdf, from_page=page_index, to_page=page_index)
+
+    fd, out_path = tempfile.mkstemp(suffix=".pdf")
+    os.close(fd)
+    out.save(out_path)
+    out.close()
+    return out_path
+
+
+def _encode_preview(image_path: str, stem: str, max_w: int = 1200):
+    """
+    Encode a preview image (prefer WEBP, fallback JPEG).
+    Returns: (django.core.files.File, ext)
+    """
+    img = Image.open(image_path)
+    img = ImageOps.exif_transpose(img)
+    if img.mode not in ("RGB", "L"):
+        img = img.convert("RGB")
+
+    if max_w and img.width > max_w:
+        new_h = max(1, int(img.height * (max_w / float(img.width))))
+        img = img.resize((max_w, new_h), Image.LANCZOS)
+
+    # Try WEBP first
+    buf = io.BytesIO()
+    try:
+        img.save(buf, format="WEBP", quality=78, method=6)
+        buf.seek(0)
+        return File(buf, name=f"{stem}.webp"), ".webp"
+    except Exception:
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=82, optimize=True)
+        buf.seek(0)
+        return File(buf, name=f"{stem}.jpg"), ".jpg"
 
 
 @api_view(["POST"])
@@ -1729,10 +2294,18 @@ class SupportingDocumentViewSet(viewsets.ModelViewSet):
             raise PermissionDenied("Dokumen pendukung sudah disetujui; tidak bisa diubah.")
 
         prev_status = instance.status
-        obj: SupportingDocument = serializer.save()
-        if prev_status != obj.status and obj.status == "disetujui":
-            obj.approved_at = timezone.now()
-            obj.save(update_fields=["approved_at"])
+        with transaction.atomic():
+            obj: SupportingDocument = serializer.save()
+
+            # On transition -> approved: stamp file bytes, then set approved_at
+            if prev_status != obj.status and obj.status == "disetujui":
+                now = timezone.now()
+
+                # Embed the approval stamp into the stored PDF/image
+                _stamp_supporting_doc_file_in_place(obj, now)
+
+                obj.approved_at = now
+                obj.save(update_fields=["approved_at"])
 
     def destroy(self, request, *args, **kwargs):
         instance: SupportingDocument = self.get_object()
@@ -1740,6 +2313,126 @@ class SupportingDocumentViewSet(viewsets.ModelViewSet):
         if instance.status == "disetujui":
             raise PermissionDenied("Dokumen pendukung sudah disetujui; tidak bisa dihapus.")
         return super().destroy(request, *args, **kwargs)
+
+
+# --- Supporting document stamping (embed stamp into stored PDF/image) -------
+
+STAMP_TEXT = "DISETUJUI"
+STAMP_COLOR_IMG = (0, 160, 0)  # RGB for Pillow
+STAMP_COLOR_PDF = (0, 0.62, 0)  # RGB floats 0..1 for PyMuPDF
+
+FONT_BOLD = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+FONT_REG = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+
+
+def _stamp_dt(dt):
+    # dd-mm-YYYY HH:MM
+    return timezone.localtime(dt).strftime("%d-%m-%Y %H:%M")
+
+
+def _stamp_image_in_place(path: str, approved_at):
+    with Image.open(path) as im:
+        im = ImageOps.exif_transpose(im)
+
+        # work in RGB
+        if im.mode not in ("RGB", "L"):
+            im = im.convert("RGB")
+        elif im.mode == "L":
+            im = im.convert("RGB")
+
+        draw = ImageDraw.Draw(im)
+
+        # scale font sizes with image width
+        big = max(24, int(im.width * 0.06))
+        small = max(14, int(big * 0.45))
+
+        try:
+            f_big = ImageFont.truetype(FONT_BOLD, big)
+            f_small = ImageFont.truetype(FONT_REG, small)
+        except Exception:
+            f_big = ImageFont.load_default()
+            f_small = ImageFont.load_default()
+
+        x = max(12, im.width // 80)
+        y = x
+
+        draw.text((x, y), STAMP_TEXT, fill=STAMP_COLOR_IMG, font=f_big)
+        draw.text(
+            (x, y + big + (x // 2)),
+            _stamp_dt(approved_at),
+            fill=STAMP_COLOR_IMG,
+            font=f_small,
+        )
+
+        ext = os.path.splitext(path)[1].lower()
+        fd, tmp = tempfile.mkstemp(suffix=ext)
+        os.close(fd)
+        try:
+            if ext == ".png":
+                im.save(tmp, format="PNG", optimize=True)
+            else:
+                # .jpg/.jpeg fallback
+                im.save(tmp, format="JPEG", quality=92, optimize=True)
+            os.replace(tmp, path)
+        finally:
+            try:
+                if os.path.exists(tmp):
+                    os.remove(tmp)
+            except Exception:
+                pass
+
+
+def _stamp_pdf_in_place(path: str, approved_at):
+    dt_str = _stamp_dt(approved_at)
+
+    pdf = fitz.open(path)
+    try:
+        for page in pdf:
+            w = float(page.rect.width)
+            fs_big = max(18.0, w * 0.05)  # roughly scales with page size
+            fs_small = max(10.0, fs_big * 0.45)
+
+            x = 36
+            y = 36
+            page.insert_text((x, y), STAMP_TEXT, fontsize=fs_big, color=STAMP_COLOR_PDF)
+            page.insert_text(
+                (x, y + fs_big + 2),
+                dt_str,
+                fontsize=fs_small,
+                color=STAMP_COLOR_PDF,
+            )
+
+        fd, tmp = tempfile.mkstemp(suffix=".pdf")
+        os.close(fd)
+        try:
+            pdf.save(tmp, deflate=True, garbage=4)
+            os.replace(tmp, path)
+        finally:
+            try:
+                if os.path.exists(tmp):
+                    os.remove(tmp)
+            except Exception:
+                pass
+    finally:
+        pdf.close()
+
+
+def _stamp_supporting_doc_file_in_place(sdoc: SupportingDocument, approved_at):
+    path = getattr(sdoc.file, "path", None)
+    if not path or not os.path.exists(path):
+        raise FileNotFoundError("Supporting document file not found on disk.")
+
+    ext = os.path.splitext(path)[1].lower()
+    if ext == ".pdf":
+        _stamp_pdf_in_place(path, approved_at)
+        return True
+    if ext in {".png", ".jpg", ".jpeg"}:
+        _stamp_image_in_place(path, approved_at)
+        return True
+
+    # For doc/docx/xls/xlsx: not supported for "engraving" without conversion.
+    # Allow approval, but no stamp will be embedded.
+    return False
 
 
 def _clamp_int(v, default: int, lo: int, hi: int) -> int:

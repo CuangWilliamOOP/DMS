@@ -146,6 +146,14 @@ export function ItemDocsPreview({
   const renderFilePreview = (url, doc) => {
     if (!url) return <Typography>Tidak ada file.</Typography>;
 
+    const withV = (u, v) => {
+      if (!v) return u;
+      return u.includes('?') ? `${u}&v=${v}` : `${u}?v=${v}`;
+    };
+
+    const v = doc?.approved_at ? new Date(doc.approved_at).getTime() : null;
+    const fullFile = doc?.file ? withV(doc.file, v) : doc?.file;
+
     const ext = getExt(url);
     const isImg = ['png', 'jpg', 'jpeg', 'webp'].includes(ext);
 
@@ -155,11 +163,11 @@ export function ItemDocsPreview({
       const sizes = '(max-width: 680px) 92vw, 640px';
 
       // small preview, full-res only on zoom
-      const src = previewBase ? `${previewBase}?w=640&fmt=webp` : url;
+      const src = previewBase ? withV(`${previewBase}?w=640&fmt=webp`, v) : withV(url, v);
       const srcSet = previewBase
         ? [
-            `${previewBase}?w=480&fmt=webp 480w`,
-            `${previewBase}?w=640&fmt=webp 640w`,
+            `${withV(`${previewBase}?w=480&fmt=webp`, v)} 480w`,
+            `${withV(`${previewBase}?w=640&fmt=webp`, v)} 640w`,
           ].join(', ')
         : undefined;
 
@@ -170,7 +178,7 @@ export function ItemDocsPreview({
               src={src}
               srcSet={srcSet}
               sizes={sizes}
-              data-zoom-src={doc.file}
+              data-zoom-src={fullFile}
               alt="Dokumen Pendukung"
               loading="lazy"
               decoding="async"
@@ -178,7 +186,7 @@ export function ItemDocsPreview({
             />
           </Zoom>
           <Box sx={{ mt: 1 }}>
-            <Button size="small" href={doc.file} target="_blank" rel="noreferrer">
+            <Button size="small" href={fullFile} target="_blank" rel="noreferrer">
               Buka file asli
             </Button>
           </Box>
@@ -188,15 +196,16 @@ export function ItemDocsPreview({
 
     if (ext === 'pdf') {
       const base = (API?.defaults?.baseURL || '/api').replace(/\/$/, '');
-      const prev = `${base}/sdoc/${doc.id}/preview?w=640`;
+      const previewBase = `${base}/sdoc/${doc.id}/preview`;
+      const prev = withV(`${previewBase}?w=640`, v);
       return (
         <Box sx={{ textAlign: 'center' }}>
           <Zoom>
             <img
               src={prev}
-              srcSet={`${base}/sdoc/${doc.id}/preview?w=480 480w, ${base}/sdoc/${doc.id}/preview?w=640 640w, ${base}/sdoc/${doc.id}/preview?w=1200 1200w`}
+              srcSet={`${withV(`${previewBase}?w=480`, v)} 480w, ${withV(`${previewBase}?w=640`, v)} 640w, ${withV(`${previewBase}?w=1200`, v)} 1200w`}
               sizes="(max-width: 600px) 92vw, 800px"
-              data-zoom-src={doc.file}        // fetch full PDF only on zoom/open
+              data-zoom-src={fullFile}        // fetch full PDF only on zoom/open
               alt="PDF"
               loading="lazy"
               decoding="async"
@@ -204,7 +213,7 @@ export function ItemDocsPreview({
             />
           </Zoom>
           <Box sx={{ mt: 1 }}>
-            <Button size="small" href={doc.file} target="_blank" rel="noreferrer">
+            <Button size="small" href={fullFile} target="_blank" rel="noreferrer">
               Buka PDF asli
             </Button>
           </Box>
