@@ -161,7 +161,7 @@ function HomePage() {
           >
             {tabValue === 2 ? (
               <Suspense fallback={<Box sx={{ p: 3 }}>Loading map…</Box>}>
-                <FarmMapPanel estateCode="bunut1" />
+                <FarmMapPanel initialEstateCode="bunut1" />
               </Suspense>
             ) : (
               <DocumentTable

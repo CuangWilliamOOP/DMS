@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Box,
   Paper,
@@ -30,7 +30,8 @@ export default function ResetPasswordPage() {
   const rid = (params.get('rid') || '').trim();
   const token = (params.get('token') || '').trim();
 
-  const linkOk = useMemo(() => !!rid && !!token, [rid, token]);
+  const paramsOk = useMemo(() => !!rid && !!token, [rid, token]);
+  const [linkState, setLinkState] = useState(paramsOk ? 'checking' : 'invalid'); // checking | valid | invalid
 
   const [newPassword, setNewPassword] = useState('');
   const [confirmNewPassword, setConfirmNewPassword] = useState('');
@@ -38,12 +39,45 @@ export default function ResetPasswordPage() {
   const [done, setDone] = useState(false);
   const [error, setError] = useState('');
 
+  useEffect(() => {
+    let cancelled = false;
+
+    async function run() {
+      if (!paramsOk) {
+        setLinkState('invalid');
+        return;
+      }
+
+      setLinkState('checking');
+      setError('');
+
+      try {
+        await API.post('/auth/password/reset/validate/', { reset_id: rid, token });
+        if (!cancelled) setLinkState('valid');
+      } catch (err) {
+        if (!cancelled) {
+          setLinkState('invalid');
+          setError(
+            extractApiError(err, 'Link reset sudah tidak berlaku. Silakan minta link baru.')
+          );
+        }
+      }
+    }
+
+    run();
+    return () => {
+      cancelled = true;
+    };
+  }, [paramsOk, rid, token]);
+
+  const linkOk = paramsOk && linkState === 'valid';
+
   const submit = async (e) => {
     e.preventDefault();
     setError('');
 
     if (!linkOk) {
-      setError('Link reset tidak valid.');
+      setError('Link reset sudah tidak berlaku. Silakan minta link baru.');
       return;
     }
     if (!newPassword) {
@@ -122,7 +156,11 @@ export default function ResetPasswordPage() {
           <Stack spacing={2}>
             {error ? <Alert severity="error">{error}</Alert> : null}
 
-            {!linkOk ? (
+            {paramsOk && linkState === 'checking' ? (
+              <Alert severity="info">Memeriksa link reset…</Alert>
+            ) : null}
+
+            {!paramsOk ? (
               <Alert severity="error">Link reset tidak valid atau parameter tidak lengkap.</Alert>
             ) : null}
 

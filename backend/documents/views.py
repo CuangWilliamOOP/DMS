@@ -721,6 +721,12 @@ def otp_password_change_confirm(request):
     if otp_user_id != int(request.user.id):
         return Response({"error": "OTP tidak valid untuk user ini."}, status=drf_status.HTTP_403_FORBIDDEN)
 
+    if request.user.check_password(new_password):
+        return Response(
+            {"error": "Password baru tidak boleh sama dengan password saat ini."},
+            status=drf_status.HTTP_400_BAD_REQUEST,
+        )
+
     # Validate password using Django validators
     try:
         validate_password(new_password, user=request.user)
@@ -738,6 +744,10 @@ def otp_password_change_confirm(request):
 
 def _pwdreset_key(reset_id: str) -> str:
     return f"pwdreset:{reset_id}"
+
+
+def _pwdreset_used_key(reset_id: str) -> str:
+    return f"pwdreset_used:{reset_id}"
 
 
 def _public_base_url(request) -> str:
@@ -882,8 +892,16 @@ def _create_password_reset(*, user_id: int) -> tuple[str, str]:
     return reset_id, token
 
 
-def _verify_password_reset(reset_id: str, token: str) -> tuple[dict, str | None]:
-    key = _pwdreset_key((reset_id or "").strip())
+def _verify_password_reset(reset_id: str, token: str, *, consume: bool = False) -> tuple[dict, str | None]:
+    rid = (reset_id or "").strip()
+    if not rid:
+        return {}, "Link reset tidak valid."
+
+    # If already used, block immediately (even if payload still exists)
+    if cache.get(_pwdreset_used_key(rid)):
+        return {}, "Link reset sudah dipakai."
+
+    key = _pwdreset_key(rid)
     payload = cache.get(key)
     if not payload:
         return {}, "Link reset tidak ditemukan / sudah kedaluwarsa."
@@ -905,6 +923,14 @@ def _verify_password_reset(reset_id: str, token: str) -> tuple[dict, str | None]
         ttl = max(1, int(payload.get("exp") or now) - now)
         cache.set(key, payload, timeout=ttl)
         return {}, "Link reset tidak valid."
+
+    if consume:
+        # Atomic one-time consumption (fixes double-submit / parallel requests)
+        claimed = cache.add(_pwdreset_used_key(rid), 1, timeout=PASSWORD_RESET_TTL_SECONDS)
+        if not claimed:
+            return {}, "Link reset sudah dipakai."
+        cache.delete(key)
+
     return payload, None
 
 
@@ -980,7 +1006,8 @@ def password_reset_confirm(request):
     if not new_password:
         return Response({"error": "Password baru wajib diisi."}, status=drf_status.HTTP_400_BAD_REQUEST)
 
-    payload, err = _verify_password_reset(reset_id, token)
+    # Verify link/token, but don't consume yet (so user can fix password errors)
+    payload, err = _verify_password_reset(reset_id, token, consume=False)
     if err:
         return Response({"error": err}, status=drf_status.HTTP_400_BAD_REQUEST)
 
@@ -990,6 +1017,13 @@ def password_reset_confirm(request):
     except _User.DoesNotExist:
         return Response({"error": "User tidak ditemukan."}, status=drf_status.HTTP_400_BAD_REQUEST)
 
+    # NEW: forbid same password
+    if user.check_password(new_password):
+        return Response(
+            {"error": "Password baru tidak boleh sama dengan password saat ini."},
+            status=drf_status.HTTP_400_BAD_REQUEST,
+        )
+
     try:
         validate_password(new_password, user=user)
     except ValidationError as e:
@@ -998,13 +1032,36 @@ def password_reset_confirm(request):
             status=drf_status.HTTP_400_BAD_REQUEST,
         )
 
+    # Consume link atomically (one-time) BEFORE changing password to prevent reuse
+    _, err = _verify_password_reset(reset_id, token, consume=True)
+    if err:
+        return Response({"error": err}, status=drf_status.HTTP_400_BAD_REQUEST)
+
     user.set_password(new_password)
     user.save(update_fields=["password"])
 
-    # Invalidate link after successful reset
-    cache.delete(_pwdreset_key(reset_id))
-
     return Response({"ok": True}, status=drf_status.HTTP_200_OK)
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def password_reset_validate(request):
+    reset_id = (request.data.get("reset_id") or request.data.get("rid") or "").strip()
+    token = (request.data.get("token") or "").strip()
+
+    if not reset_id or not token:
+        return Response({"error": "Link reset tidak valid."}, status=drf_status.HTTP_400_BAD_REQUEST)
+
+    payload, err = _verify_password_reset(reset_id, token, consume=False)
+    if err:
+        return Response({"error": err}, status=drf_status.HTTP_400_BAD_REQUEST)
+
+    now = int(time.time())
+    exp = int(payload.get("exp") or now)
+    return Response(
+        {"valid": True, "expires_in": max(0, exp - now)},
+        status=drf_status.HTTP_200_OK,
+    )
 
 # --- Marker detection helpers (fast text + OCR fallback) ---
 def _crop_top_right_b64(image_path: str, w_frac: float = 0.35, h_frac: float = 0.25) -> str:

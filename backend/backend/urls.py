@@ -22,6 +22,7 @@ from documents.views import (
     otp_password_change_confirm,
     password_reset_start,
     password_reset_confirm,
+    password_reset_validate,
 )
 from django.conf import settings
 from django.conf.urls.static import static
@@ -50,6 +51,7 @@ urlpatterns = [
     path("api/auth/password/confirm/", otp_password_change_confirm, name="otp_password_change_confirm"),
     path("api/auth/password/reset/start/", password_reset_start, name="password_reset_start"),
     path("api/auth/password/reset/confirm/", password_reset_confirm, name="password_reset_confirm"),
+    path("api/auth/password/reset/validate/", password_reset_validate, name="password_reset_validate"),
     path('api/token/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('api/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
     path('api/me/', user_info),  # <-- add user_info endpoint
@@ -76,3 +78,4 @@ urlpatterns = [
 
 # Serve media in development
 urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+

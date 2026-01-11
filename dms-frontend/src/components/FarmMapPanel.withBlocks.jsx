@@ -313,7 +313,13 @@ function decorateBlocksWithContrastingColors(geojson) {
   };
 }
 
-export default function FarmMapPanel({ estateCode = 'bunut1' }) {
+const ESTATE_OPTIONS = [
+  { code: 'bunut1', label: 'Bunut 1' },
+  { code: 'palas', label: 'Palas' },
+];
+
+export default function FarmMapPanel({ initialEstateCode = 'bunut1' }) {
+  const [estateCode, setEstateCode] = useState(initialEstateCode);
   const theme = useTheme();
   const navigate = useNavigate();
   const containerRef = useRef(null);
@@ -327,6 +333,24 @@ export default function FarmMapPanel({ estateCode = 'bunut1' }) {
   const [blocksMeta, setBlocksMeta] = useState(null); // { AA2: {...}, ... }
   const [selectedBlockCode, setSelectedBlockCode] = useState(null);
   const [metaFilter, setMetaFilter] = useState('Ringkasan');
+
+  useEffect(() => {
+    // Clear per-estate UI state
+    setSelectedBlockCode(null);
+    setBlocks(null);
+    setBlocksMeta(null);
+    setOutline(null);
+    setError('');
+    setLoading(true);
+
+    // Remove popup if any
+    if (popupRef.current) {
+      try {
+        popupRef.current.remove();
+      } catch {}
+      popupRef.current = null;
+    }
+  }, [estateCode]);
   
 
   const colors = useMemo(() => {
@@ -342,6 +366,11 @@ export default function FarmMapPanel({ estateCode = 'bunut1' }) {
       overlayBg: dark ? 'rgba(10, 12, 18, 0.65)' : 'rgba(255, 255, 255, 0.72)',
     };
   }, [theme.palette.mode]);
+
+  const estateLabel = useMemo(
+    () => ESTATE_OPTIONS.find((x) => x.code === estateCode)?.label || estateCode,
+    [estateCode]
+  );
 
   const fitToOutline = useCallback(() => {
     const map = mapRef.current;
@@ -935,7 +964,37 @@ export default function FarmMapPanel({ estateCode = 'bunut1' }) {
         )}
 
         {/* Controls */}
-        <Box sx={{ position: 'absolute', top: 12, right: 12, display: 'flex', gap: 1, zIndex: 4 }}>
+        <Box
+          sx={{
+            position: 'absolute',
+            top: 12,
+            right: 12,
+            display: 'flex',
+            gap: 1,
+            zIndex: 4,
+            alignItems: 'center',
+          }}
+        >
+          <TextField
+            select
+            size="small"
+            value={estateCode}
+            onChange={(e) => setEstateCode(String(e.target.value))}
+            sx={{
+              minWidth: 140,
+              backgroundColor:
+                theme.palette.mode === 'dark'
+                  ? 'rgba(0,0,0,0.45)'
+                  : 'rgba(255,255,255,0.88)',
+              borderRadius: 1,
+            }}
+          >
+            {ESTATE_OPTIONS.map((opt) => (
+              <MenuItem key={opt.code} value={opt.code}>
+                {opt.label}
+              </MenuItem>
+            ))}
+          </TextField>
           <Button size="small" variant="contained" onClick={fitToOutline} disabled={loading || !outline}>
             Reset view
           </Button>
@@ -957,7 +1016,7 @@ export default function FarmMapPanel({ estateCode = 'bunut1' }) {
             lineHeight: 1.2,
           }}
         >
-          <div style={{ fontWeight: 700 }}>{estateCode === 'bunut1' ? 'Bunut 1' : estateCode}</div>
+            <div style={{ fontWeight: 700 }}>{estateLabel}</div>
           <div style={{ opacity: 0.9 }}>Scroll: zoom • Right-drag: rotate</div>
         </Box>
       </Box>
