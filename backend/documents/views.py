@@ -1982,7 +1982,22 @@ class PaymentProofViewSet(viewsets.ModelViewSet):
         main_document = self.request.query_params.get("main_document")
         if main_document:
             qs = qs.filter(main_document_id=main_document)
-        return qs
+
+        sec = self.request.query_params.get("section_index")
+        if sec not in (None, ""):
+            try:
+                qs = qs.filter(section_index=int(sec))
+            except Exception:
+                pass
+
+        item = self.request.query_params.get("item_index")
+        if item not in (None, ""):
+            try:
+                qs = qs.filter(item_index=int(item))
+            except Exception:
+                pass
+
+        return qs.order_by("payment_proof_sequence", "id")
 
     # 🔒 Block edits when main doc is archived / paid
     def _ensure_editable(self, main_doc: Document):
@@ -1992,16 +2007,27 @@ class PaymentProofViewSet(viewsets.ModelViewSet):
             )
 
     def perform_create(self, serializer):
-        # Replace existing proof if one exists, BUT lock after archive/paid
         main_doc = serializer.validated_data["main_document"]
         self._ensure_editable(main_doc)
-        PaymentProof.objects.filter(
-            main_document=main_doc,
-            section_index=serializer.validated_data["section_index"],
-            item_index=serializer.validated_data["item_index"],
-        ).delete()
-        proof: PaymentProof = serializer.save()
-        # Mirror proof.identifier into PAY_REF cell for matching row
+
+        sec = serializer.validated_data["section_index"]
+        idx = serializer.validated_data["item_index"]
+
+        last = (
+            PaymentProof.objects.filter(
+                main_document=main_doc,
+                section_index=sec,
+                item_index=idx,
+            )
+            .order_by("-payment_proof_sequence")
+            .values_list("payment_proof_sequence", flat=True)
+            .first()
+            or 0
+        )
+
+        proof: PaymentProof = serializer.save(payment_proof_sequence=int(last) + 1)
+
+        # Mirror identifier into PAY_REF, but DON'T overwrite an existing value
         pj = main_doc.parsed_json or []
         if 0 <= proof.section_index < len(pj):
             tbl = pj[proof.section_index].get("table")
@@ -2013,9 +2039,12 @@ class PaymentProofViewSet(viewsets.ModelViewSet):
                 row = tbl[proof.item_index + 1]
                 if len(row) <= pay_idx:
                     row.extend([""] * (pay_idx + 1 - len(row)))
-                row[pay_idx] = proof.identifier
-                main_doc.parsed_json = pj
-                main_doc.save(update_fields=["parsed_json"])
+
+                # only fill if empty
+                if not row[pay_idx] or not str(row[pay_idx]).strip():
+                    row[pay_idx] = proof.identifier
+                    main_doc.parsed_json = pj
+                    main_doc.save(update_fields=["parsed_json"])
 
     def partial_update(self, request, *args, **kwargs):
         instance: PaymentProof = self.get_object()
@@ -2025,21 +2054,40 @@ class PaymentProofViewSet(viewsets.ModelViewSet):
     def destroy(self, request, *args, **kwargs):
         instance: PaymentProof = self.get_object()
         self._ensure_editable(instance.main_document)
-        # Clear mirrored PAY_REF when deleting a proof
+
         doc = instance.main_document
+        sec = instance.section_index
+        idx = instance.item_index
+        deleted_ident = instance.identifier
+
+        # delete first
+        resp = super().destroy(request, *args, **kwargs)
+
+        # after delete, see if other proofs still exist for the same row
+        remaining = (
+            PaymentProof.objects.filter(main_document=doc, section_index=sec, item_index=idx)
+            .order_by("payment_proof_sequence", "id")
+            .first()
+        )
+
         pj = doc.parsed_json or []
-        if 0 <= instance.section_index < len(pj):
-            tbl = pj[instance.section_index].get("table")
-            if tbl and len(tbl) >= 2 and 0 <= instance.item_index < (len(tbl) - 1):
+        if 0 <= sec < len(pj):
+            tbl = pj[sec].get("table")
+            if tbl and len(tbl) >= 2 and 0 <= idx < (len(tbl) - 1):
                 headers = tbl[0]
                 if "PAY_REF" in headers:
                     pay_idx = headers.index("PAY_REF")
-                    row = tbl[instance.item_index + 1]
+                    row = tbl[idx + 1]
                     if len(row) > pay_idx:
-                        row[pay_idx] = ""
-                    doc.parsed_json = pj
-                    doc.save(update_fields=["parsed_json"])
-        return super().destroy(request, *args, **kwargs)
+                        current = str(row[pay_idx] or "").strip()
+
+                        # Only touch PAY_REF if it matches the deleted identifier (auto-written)
+                        if current == deleted_ident:
+                            row[pay_idx] = remaining.identifier if remaining else ""
+                            doc.parsed_json = pj
+                            doc.save(update_fields=["parsed_json"])
+
+        return resp
 
 
 @api_view(["GET"])
@@ -2574,6 +2622,78 @@ def sdoc_preview(request, pk: int):
         return resp
     except Exception as e:
         logger.exception("sdoc_preview failed: %s", e)
+        return HttpResponse(status=500)
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def payment_proof_preview(request, pk: int):
+    """Render a lightweight preview image for a payment proof (PDF/image).
+
+    Query params:
+      - w: target width (px), default 640
+      - fmt: webp|jpeg (optional)
+    """
+    proof = get_object_or_404(PaymentProof, pk=pk)
+    path = getattr(proof.file, "path", None)
+    if not path or not os.path.exists(path):
+        return HttpResponse(status=404)
+
+    w = _clamp_int(request.GET.get("w"), default=640, lo=120, hi=1600)
+
+    fmt = (request.GET.get("fmt") or "").strip().lower()
+    if fmt not in {"webp", "jpeg", "jpg"}:
+        accept = (request.headers.get("Accept") or "").lower()
+        fmt = "webp" if "image/webp" in accept else "jpeg"
+    if fmt == "jpg":
+        fmt = "jpeg"
+
+    st = os.stat(path)
+    etag = hashlib.sha1(f"pp-{st.st_mtime_ns}-{st.st_size}-{w}-{fmt}".encode()).hexdigest()
+    if (request.headers.get("If-None-Match") or "") == etag:
+        resp = HttpResponse(status=304)
+        resp["ETag"] = etag
+        return resp
+
+    ext = os.path.splitext(path)[1].lower()
+    try:
+        if ext == ".pdf":
+            pdf = fitz.open(path)
+            page = pdf.load_page(0)
+            zoom = w / max(1.0, float(page.rect.width))
+            zoom = max(0.2, min(6.0, zoom))
+            pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
+            img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+            pdf.close()
+        else:
+            img = Image.open(path)
+            img = ImageOps.exif_transpose(img)
+            if img.mode not in ("RGB", "L"):
+                img = img.convert("RGB")
+            if img.width > w:
+                h = int(img.height * (w / img.width))
+                img = img.resize((w, max(1, h)), Image.LANCZOS)
+
+        buf = io.BytesIO()
+        if fmt == "webp":
+            try:
+                img.save(buf, format="WEBP", quality=78, method=6)
+                content_type = "image/webp"
+            except Exception:
+                buf = io.BytesIO()
+                img.save(buf, format="JPEG", quality=80, optimize=True)
+                content_type = "image/jpeg"
+        else:
+            img.save(buf, format="JPEG", quality=80, optimize=True)
+            content_type = "image/jpeg"
+
+        data = buf.getvalue()
+        resp = HttpResponse(data, content_type=content_type)
+        resp["ETag"] = etag
+        resp["Cache-Control"] = "public, max-age=86400"
+        return resp
+    except Exception as e:
+        logger.exception("payment_proof_preview failed: %s", e)
         return HttpResponse(status=500)
 
 

@@ -218,22 +218,27 @@ class PaymentProof(models.Model):
     section_index = models.PositiveIntegerField()
     item_index = models.PositiveIntegerField()
 
+    # NEW: allow multiple proofs per (doc, section, item)
+    payment_proof_sequence = models.PositiveSmallIntegerField(default=1, editable=False)
+
     identifier = models.CharField(max_length=50, unique=True, editable=False)
 
     file = models.FileField(
         upload_to="uploads/payment_proofs/",
-        validators=[validate_file_extension],
+        validators=[validate_file_extension],  # already allows .pdf/.png/.jpg/.jpeg
     )
     uploaded_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        unique_together = ("main_document", "section_index", "item_index")
+        ordering = ["payment_proof_sequence", "id"]
+        unique_together = ("main_document", "section_index", "item_index", "payment_proof_sequence")
 
     def save(self, *args, **kwargs):
         if not self.identifier:
             s = self.section_index + 1
             i = self.item_index + 1
-            self.identifier = f"{self.main_document.document_code}S{s}I{i}"
+            seq = int(self.payment_proof_sequence or 1)
+            self.identifier = f"{self.main_document.document_code}S{s}I{i}P{seq:02d}"
         super().save(*args, **kwargs)
 
     def __str__(self):

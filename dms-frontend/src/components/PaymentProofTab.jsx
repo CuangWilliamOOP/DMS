@@ -71,7 +71,7 @@ function PaymentProofTab({ document, sectionIndex, itemIndex, readOnly = false }
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
-    accept: { "image/*": [".jpeg", ".jpg", ".png"] },
+    accept: { "image/*": [".jpeg", ".jpg", ".png"], "application/pdf": [".pdf"] },
     disabled: isReadOnly,
   });
 
@@ -146,7 +146,7 @@ function PaymentProofTab({ document, sectionIndex, itemIndex, readOnly = false }
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept="image/*"
+                  accept="image/*,application/pdf"
                   onChange={onReplaceFile}
                   hidden
                 />
@@ -158,23 +158,26 @@ function PaymentProofTab({ document, sectionIndex, itemIndex, readOnly = false }
           </Box>
 
           <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 420 }}>
-  <Zoom>
-    <img
-      src={paymentProof.file}
-      alt="Bukti Pembayaran"
-      style={{
-        maxWidth: '100%',
-        maxHeight: 420,
-        objectFit: 'contain',
-        display: 'block',
-        margin: '0 auto',
-        cursor: 'zoom-in',
-        borderRadius: 8,
-        border: '1px solid rgba(0,0,0,0.08)',
-      }}
-    />
-  </Zoom>
-</Box>
+            <Zoom>
+              <img
+                src={`${(API?.defaults?.baseURL || '/api').replace(/\/$/, '')}/payment-proof/${paymentProof.id}/preview?w=640`}
+                srcSet={`${(API?.defaults?.baseURL || '/api').replace(/\/$/, '')}/payment-proof/${paymentProof.id}/preview?w=480 480w, ${(API?.defaults?.baseURL || '/api').replace(/\/$/, '')}/payment-proof/${paymentProof.id}/preview?w=640 640w, ${(API?.defaults?.baseURL || '/api').replace(/\/$/, '')}/payment-proof/${paymentProof.id}/preview?w=1200 1200w`}
+                sizes="(max-width: 600px) 92vw, 800px"
+                data-zoom-src={`${(API?.defaults?.baseURL || '/api').replace(/\/$/, '')}/payment-proof/${paymentProof.id}/preview?w=1600`}
+                alt="Preview Bukti Pembayaran"
+                style={{
+                  maxWidth: '100%',
+                  maxHeight: 420,
+                  objectFit: 'contain',
+                  display: 'block',
+                  margin: '0 auto',
+                  cursor: 'zoom-in',
+                  borderRadius: 8,
+                  border: '1px solid rgba(0,0,0,0.08)',
+                }}
+              />
+            </Zoom>
+          </Box>
 
           <Box sx={{ mt: 1, display: "flex", gap: 2, flexWrap: "wrap", color: "text.secondary" }}>
             {paymentProof?.identifier && (
@@ -250,7 +253,7 @@ function PaymentProofTab({ document, sectionIndex, itemIndex, readOnly = false }
           )}
 
           <Typography variant="caption" sx={{ mt: 1, display: 'block', color: 'text.secondary' }}>
-            JPG/PNG saja, maks. 5MB. Otomatis menggantikan bukti yang sudah ada.
+            JPG/PNG/PDF, maks. 5MB.
           </Typography>
         </>
       )}

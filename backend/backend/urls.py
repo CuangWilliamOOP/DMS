@@ -12,6 +12,7 @@ from documents.views import (
     UserSettingsView,
     PaymentProofViewSet,
     sdoc_preview,
+    payment_proof_preview,
     rekap_view,
     kebun_outline_view,
     kebun_blocks_view,
@@ -57,6 +58,7 @@ urlpatterns = [
     path('api/me/', user_info),  # <-- add user_info endpoint
     path("api/user-settings/", UserSettingsView.as_view(), name="user_settings"),
     path("api/sdoc/<int:pk>/preview", sdoc_preview, name="sdoc_preview"),
+    path("api/payment-proof/<int:pk>/preview", payment_proof_preview, name="payment_proof_preview"),
 
     # NEW: kebun outline (GeoJSON)
     path(
@@ -78,4 +80,3 @@ urlpatterns = [
 
 # Serve media in development
 urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
-

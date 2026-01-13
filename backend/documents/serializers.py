@@ -53,7 +53,8 @@ class UserSettingsSerializer(serializers.ModelSerializer):
 class PaymentProofSerializer(serializers.ModelSerializer):
     # Force URL serialization
     file = serializers.FileField(use_url=True)
+
     class Meta:
         model = PaymentProof
         fields = "__all__"
-        read_only_fields = ("identifier", "uploaded_at")
+        read_only_fields = ("identifier", "uploaded_at", "payment_proof_sequence")

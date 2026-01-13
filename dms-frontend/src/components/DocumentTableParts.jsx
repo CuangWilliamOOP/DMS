@@ -75,6 +75,7 @@ export function ItemDocsPreview({
   itemIndex,
   handleDeleteSupportingClick,
   onDocApproved,
+  onProofChanged,          // <-- ADD THIS
   readOnly = false, // ← NEW: tampilan saja (sembunyikan tombol approve/hapus)
 }) {
   // Helper: always sort by supporting_doc_sequence
@@ -356,6 +357,7 @@ export function ItemDocsPreview({
           sectionIndex={sectionIndex}
           itemIndex={itemIndex}
           readOnly={readOnly}
+          onProofChanged={onProofChanged}
         />
       )}
     </Box>
