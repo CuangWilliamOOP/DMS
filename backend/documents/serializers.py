@@ -58,3 +58,9 @@ class PaymentProofSerializer(serializers.ModelSerializer):
         model = PaymentProof
         fields = "__all__"
         read_only_fields = ("identifier", "uploaded_at", "payment_proof_sequence")
+
+        # payment_proof_sequence is assigned server-side in PaymentProofViewSet.perform_create.
+        # DRF auto-validates unique_together using the model default (sequence=1),
+        # which blocks uploading a 2nd/3rd proof for the same item.
+        # Rely on DB constraint + perform_create sequencing instead.
+        validators = []

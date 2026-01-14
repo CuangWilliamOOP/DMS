@@ -789,6 +789,7 @@ function DocumentTable({ documents, refreshDocuments }) {
     try {
       await API.patch(`/documents/${doc.id}/`, {
         status: 'sudah_dibayar',
+        archived: true,
         payment_reference: reference,
       });
       // alert('Referensi pembayaran berhasil disimpan, dokumen sekarang statusnya "Sudah Dibayar"!');
@@ -1512,7 +1513,7 @@ function DocumentTable({ documents, refreshDocuments }) {
         onConfirm={async () => {
           if (!payDoneDoc) return;
           try {
-            await API.patch(`/documents/${payDoneDoc.id}/`, { status: 'sudah_dibayar' });
+            await API.patch(`/documents/${payDoneDoc.id}/`, { status: 'sudah_dibayar', archived: true });
             refreshDocuments();
           } catch (err) {
             console.error(err);
